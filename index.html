@@ -486,6 +486,25 @@ body.jawra-rotate-mode #playerOverlay{position:fixed;inset:0;width:100vw;height:
 body.jawra-rotate-mode #playerOverlay > :not(.player-video){display:none!important}
 body.jawra-rotate-mode .player-video{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;max-width:none!important;aspect-ratio:auto!important;margin:0!important;transform:none!important;z-index:15001;background:#000;box-shadow:none}
 body.jawra-rotate-mode #ytFrame{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important}
+/* Android WebView fallback: simulate landscape when native orientation lock is unavailable. */
+@media (orientation:portrait){
+  body.jawra-rotate-mode .player-video{
+    position:fixed!important;
+    top:0!important;
+    left:100vw!important;
+    width:100dvh!important;
+    height:100vw!important;
+    max-width:none!important;
+    aspect-ratio:auto!important;
+    margin:0!important;
+    transform:rotate(90deg)!important;
+    transform-origin:top left!important;
+  }
+  body.jawra-rotate-mode #ytFrame{
+    width:100%!important;
+    height:100%!important;
+  }
+}
 body.jawra-rotate-mode #floatingPlayPause{z-index:16000}
 body.jawra-rotate-mode #miniPlayer{z-index:16000}
 /* ================= BACKGROUND PLAYER ================= */
@@ -841,7 +860,8 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
         <div style="font-size:34px">✦</div>
         <div style="letter-spacing:3px;font-size:12px;margin:8px 0 14px">JAWRA MUSIC · PREMIUM</div>
         <strong style="font-size:clamp(22px,6vw,30px);color:#fff">YouTube API কোটা শেষ</strong>
- <p id="" style="margin:12px 0;color:#ddd">ভিডিও সার্চ সাময়িকভাবে বন্ধ আছে।</p><div id="quotaClock">রিসেট হতে বাকি সময় হিসাব হচ্ছে…</div>
+        <p id="" style="margin:12px 0;color:#ddd">ভিডিও সার্চ সাময়িকভাবে বন্ধ আছে।</p>
+        <div id="quotaClock">রিসেট হতে বাকি সময় হিসাব হচ্ছে…</div>
         <div id="quotaDetails">
         </div>
         <div class="">
@@ -853,7 +873,7 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
       <div class="loading">
         <div class="loading-spinner">
         </div>
-         Loding video's'...
+        Loding video's'...
       </div>
     </div>
     <!-- ================= PLAYER ================= -->
@@ -1015,7 +1035,7 @@ async function jawraFetch(url, timeoutMs=16000){
   const controller=typeof AbortController!=="undefined"?new AbortController():null;
   let timer=null;
   try{
-    const options=controller?{signal:controller.signal}:{};
+    const options=controller?{signal:controller.signal,cache:"no-store"}:{cache:"no-store"};
     if(controller)timer=setTimeout(()=>controller.abort(),timeoutMs);
     return await fetch(url,options);
   }finally{if(timer)clearTimeout(timer);}
@@ -1044,6 +1064,7 @@ let nextPageToken="";
 let relatedPageToken="";
 let relatedCurrentQuery="";
 let relatedSeenIds=new Set();
+let jawraPlayedVideoIds=new Set();
 let relatedRequestVersion=0;
 
 let loadingMore=false;
@@ -1158,10 +1179,12 @@ function searchEnter(event){
 
 async function loadHomeVideos(){
 
+    const homeRequest=++jawraHomeRequestVersion;
     currentMode="home";
     nextPageToken="";
     homeDancePageToken="";
     homeWeddingPageToken="";
+    homeBhojpuriPageToken="";
     loadingMore=false;
     jawraHomeVideoIds=new Set();
 
@@ -1176,20 +1199,70 @@ async function loadHomeVideos(){
             "&type=video&maxResults="+count+
             "&regionCode=BD&relevanceLanguage=bn&videoEmbeddable=true&order=relevance&key="+
             encodeURIComponent(API_KEY);
-        const [danceResponse,weddingResponse]=await Promise.all([
-            jawraFetch(makeUrl(HOME_DANCE_QUERY,16)),
-            jawraFetch(makeUrl(HOME_WEDDING_QUERY,4))
+        homeDanceActiveQuery=pickQuery(HOME_DANCE_QUERIES);
+        homeBhojpuriActiveQuery=pickQuery(HOME_BHOJPURI_QUERIES);
+        homeWeddingActiveQuery=pickQuery(HOME_WEDDING_QUERIES);
+        const [danceResponse,bhojpuriResponse,weddingResponse]=await Promise.all([
+            jawraFetch(makeUrl(homeDanceActiveQuery,16)),
+            jawraFetch(makeUrl(homeBhojpuriActiveQuery,2)),
+            jawraFetch(makeUrl(homeWeddingActiveQuery,2))
         ]);
-        const [danceData,weddingData]=await Promise.all([danceResponse.json(),weddingResponse.json()]);
+        const [danceData,bhojpuriData,weddingData]=await Promise.all([danceResponse.json(),bhojpuriResponse.json(),weddingResponse.json()]);
+        if(homeRequest!==jawraHomeRequestVersion) return;
         if(!danceResponse.ok) throw new Error(danceData.error?.message||"YouTube API Error");
+        if(!bhojpuriResponse.ok) throw new Error(bhojpuriData.error?.message||"YouTube API Error");
         if(!weddingResponse.ok) throw new Error(weddingData.error?.message||"YouTube API Error");
         homeDancePageToken=danceData.nextPageToken||"";
+        homeBhojpuriPageToken=bhojpuriData.nextPageToken||"";
         homeWeddingPageToken=weddingData.nextPageToken||"";
-        nextPageToken=homeDancePageToken||homeWeddingPageToken;
-        const items=shuffleArray([...(danceData.items||[]),...(weddingData.items||[])]);
+        nextPageToken=homeDancePageToken||homeBhojpuriPageToken||homeWeddingPageToken;
+        let freshItems=[];
+        const homeUniqueIds=new Set();
+        const collectFreshHome=(...groups)=>{
+            for(const item of groups.flat()){
+                const id=item?.id?.videoId;
+                if(!id || homeUniqueIds.has(String(id)) || jawraHomeHistory.has(String(id))) continue;
+                homeUniqueIds.add(String(id));
+                freshItems.push(item);
+            }
+        };
+        collectFreshHome(danceData.items||[],bhojpuriData.items||[],weddingData.items||[]);
+
+        // Search a few different query combinations when YouTube returns mostly
+        // previously shown videos. Never silently fall back to the same old feed.
+        let retry=0;
+        while(freshItems.length<12 && retry<3){
+            retry++;
+            const qDance=pickQuery(HOME_DANCE_QUERIES.filter(q=>q!==homeDanceActiveQuery));
+            const qBhojpuri=pickQuery(HOME_BHOJPURI_QUERIES.filter(q=>q!==homeBhojpuriActiveQuery));
+            const qWedding=pickQuery(HOME_WEDDING_QUERIES.filter(q=>q!==homeWeddingActiveQuery));
+            const retryResponses=await Promise.all([
+                jawraFetch(makeUrl(qDance,16)),
+                jawraFetch(makeUrl(qBhojpuri,2)),
+                jawraFetch(makeUrl(qWedding,2))
+            ]);
+            const retryData=await Promise.all(retryResponses.map(r=>r.json()));
+            if(homeRequest!==jawraHomeRequestVersion) return;
+            collectFreshHome(retryData[0].items||[],retryData[1].items||[],retryData[2].items||[]);
+            homeDanceActiveQuery=qDance;
+            homeBhojpuriActiveQuery=qBhojpuri;
+            homeWeddingActiveQuery=qWedding;
+            homeDancePageToken=retryData[0].nextPageToken||"";
+            homeBhojpuriPageToken=retryData[1].nextPageToken||"";
+            homeWeddingPageToken=retryData[2].nextPageToken||"";
+        }
+
+        // Only reset history after exhausting alternative searches.
+        if(freshItems.length===0 && jawraHomeHistory.size>0){
+            jawraHomeHistory.clear();
+            jawraSaveHistory("jawraHomeHistoryV2",jawraHomeHistory);
+            collectFreshHome(danceData.items||[],bhojpuriData.items||[],weddingData.items||[]);
+        }
+        const items=shuffleArray(freshItems);
         if(!items.length){results.innerHTML='<div class="empty-state"><strong>ভিডিও পাওয়া যায়নি</strong>ইন্টারনেট বা YouTube API সেটিংস পরীক্ষা করে আবার চেষ্টা করো।<br><button onclick="loadHomeVideos()" style="margin-top:14px;background:#35e6e6;border:0;border-radius:10px;padding:10px 16px;font-weight:800">আবার চেষ্টা</button></div>';return;}
         showResults(items);
     }catch(error){
+        if(homeRequest!==jawraHomeRequestVersion) return;
         const em=String(error?.message||error);
         if(/quotaExceeded|dailyLimitExceeded|quota|rateLimitExceeded/i.test(em)) showQuotaBanner("YouTube API quota is exhausted. Search will work again after the quota resets or the API limit is increased.");
         results.innerHTML=`<div class="empty-state"><strong>ভিডিও লোড করা যাচ্ছে না</strong>${escapeHtml(error.message||"Network error")}<br><button onclick="loadHomeVideos()" style="margin-top:14px;background:#35e6e6;border:0;border-radius:10px;padding:10px 16px;font-weight:800">আবার চেষ্টা</button></div>`;
@@ -1278,10 +1351,58 @@ async function searchMusic(){
 
 let jawraFeedSeenIds = new Set();
 let jawraHomeVideoIds = new Set();
+let jawraHomeHistory = new Set();
+let jawraRelatedHistory = new Set();
+let jawraHomeRequestVersion = 0;
+function jawraLoadHistory(key){
+    try { return new Set(JSON.parse(localStorage.getItem(key)||"[]").map(String)); }
+    catch(e){ return new Set(); }
+}
+function jawraSaveHistory(key,set,max=500){
+    try { localStorage.setItem(key,JSON.stringify([...set].slice(-max))); } catch(e){}
+}
+jawraHomeHistory=jawraLoadHistory("jawraHomeHistoryV2");
+jawraRelatedHistory=jawraLoadHistory("jawraRelatedHistoryV2");
+function jawraRememberHome(id){
+    jawraHomeHistory.add(String(id));
+    if(jawraHomeHistory.size>500) jawraHomeHistory=new Set([...jawraHomeHistory].slice(-400));
+    jawraSaveHistory("jawraHomeHistoryV2",jawraHomeHistory);
+}
+function jawraRememberRelated(id){
+    jawraRelatedHistory.add(String(id));
+    if(jawraRelatedHistory.size>700) jawraRelatedHistory=new Set([...jawraRelatedHistory].slice(-550));
+    jawraSaveHistory("jawraRelatedHistoryV2",jawraRelatedHistory,700);
+}
 let homeDancePageToken = "";
 let homeWeddingPageToken = "";
-const HOME_DANCE_QUERY = "Bangladeshi women dance performance Bangladesh";
-const HOME_WEDDING_QUERY = "Bangladesh wedding dance biye bari dance";
+let homeBhojpuriPageToken = "";
+let homeDanceActiveQuery="", homeBhojpuriActiveQuery="", homeWeddingActiveQuery="";
+let relatedActiveQueries={dance:"",bhojpuri:"",wedding:""};
+const HOME_DANCE_QUERIES = [
+    "Bangladeshi adult women dance stage performance",
+    "Bangladesh adult women dance performance event",
+    "Bangladesh women dance stage performance",
+    "Bangladeshi girls dance performance event",
+    "Bangladesh dance program women stage",
+    "Bangladesh ladies dance cultural program",
+    "Bangladeshi dance show women performance",
+    "Bangladesh women dance function live",
+    "Bangladesh dance performance mela stage",
+    "Bangladeshi female dance performance"
+];
+const HOME_BHOJPURI_QUERIES = [
+    "Bhojpuri dance video song",
+    "Bhojpuri new dance song stage",
+    "Bhojpuri superhit dance video"
+];
+const HOME_WEDDING_QUERIES = [
+    "Bangladesh biye bari dance performance",
+    "Bangladesh wedding dance program",
+    "Bangladesh school annual function dance",
+    "Bangladesh stage dance cultural program",
+    "Bangladesh holud ceremony dance"
+];
+function pickQuery(list){ return list[Math.floor(Math.random()*list.length)]; }
 
 function showResults(items){
     const results = document.getElementById("results");
@@ -1315,7 +1436,10 @@ function appendResults(items){
             return;
         }
         jawraFeedSeenIds.add(videoId);
-        if(currentMode === "home") jawraHomeVideoIds.add(videoId);
+        if(currentMode === "home"){
+            jawraHomeVideoIds.add(videoId);
+            jawraRememberHome(videoId);
+        }
 
         const title =
             decodeHtml(
@@ -1444,7 +1568,7 @@ window.addEventListener(
 
 async function loadMoreVideos(){
 
-    if(loadingMore || (currentMode==="home" ? (!homeDancePageToken && !homeWeddingPageToken) : !nextPageToken)){
+    if(loadingMore || (currentMode==="home" ? (!homeDancePageToken && !homeBhojpuriPageToken && !homeWeddingPageToken) : !nextPageToken)){
         return;
     }
 
@@ -1475,19 +1599,25 @@ async function loadMoreVideos(){
                 "?part=snippet&q="+encodeURIComponent(query)+"&type=video&maxResults="+count+
                 "&regionCode=BD&relevanceLanguage=bn&videoEmbeddable=true"+
                 (token ? "&pageToken="+encodeURIComponent(token) : "")+"&key="+encodeURIComponent(API_KEY);
-            if(homeDancePageToken) requests.push(jawraFetch(makeHomePageUrl(HOME_DANCE_QUERY,homeDancePageToken,16)).then(async r=>({kind:"dance",response:r,data:await r.json()})));
-            if(homeWeddingPageToken) requests.push(jawraFetch(makeHomePageUrl(HOME_WEDDING_QUERY,homeWeddingPageToken,4)).then(async r=>({kind:"wedding",response:r,data:await r.json()})));
+            if(homeDancePageToken) requests.push(jawraFetch(makeHomePageUrl(homeDanceActiveQuery,homeDancePageToken,16)).then(async r=>({kind:"dance",response:r,data:await r.json()})));
+            if(homeBhojpuriPageToken) requests.push(jawraFetch(makeHomePageUrl(homeBhojpuriActiveQuery,homeBhojpuriPageToken,2)).then(async r=>({kind:"bhojpuri",response:r,data:await r.json()})));
+            if(homeWeddingPageToken) requests.push(jawraFetch(makeHomePageUrl(homeWeddingActiveQuery,homeWeddingPageToken,2)).then(async r=>({kind:"wedding",response:r,data:await r.json()})));
             const pages=await Promise.all(requests);
             const more=[];
             for(const page of pages){
                 if(!page.response.ok) throw new Error(page.data.error?.message||"YouTube API Error");
                 if(page.kind==="dance") homeDancePageToken=page.data.nextPageToken||"";
+                else if(page.kind==="bhojpuri") homeBhojpuriPageToken=page.data.nextPageToken||"";
                 else homeWeddingPageToken=page.data.nextPageToken||"";
                 more.push(...(page.data.items||[]));
             }
-            nextPageToken=homeDancePageToken||homeWeddingPageToken;
+            nextPageToken=homeDancePageToken||homeBhojpuriPageToken||homeWeddingPageToken;
             loader.remove();
-            appendResults(shuffleArray(more));
+            const unseenMore=more.filter(item=>{
+                const id=String(item?.id?.videoId||"");
+                return id && !jawraHomeHistory.has(id) && !jawraFeedSeenIds.has(id);
+            });
+            appendResults(shuffleArray(unseenMore));
             loadingMore=false;
             return;
         }
@@ -1593,6 +1723,12 @@ function playVideo(
     document.getElementById("popupOverlay")?.classList.remove("show");
     const shortFeed=document.getElementById("shortsFeed"); if(shortFeed)shortFeed.querySelectorAll("iframe").forEach(f=>{f.src="about:blank";f.remove();});
     currentVideoId=videoId;
+    // A video that has already been opened must never reappear in recommendations.
+    jawraPlayedVideoIds.add(String(videoId));
+    jawraRememberRelated(String(videoId));
+    document.querySelectorAll("#relatedResults .related-video[data-video-id]").forEach(card=>{
+        if(card.dataset.videoId===String(videoId)) card.remove();
+    });
     currentTitle=title;
     currentChannel=channel;
     currentThumb=thumb;
@@ -1675,6 +1811,7 @@ function playVideo(
     loadVideoStats(videoId);
 
     relatedPageToken="";
+    relatedCategoryTokens={dance:"",bhojpuri:"",wedding:""};
     relatedCurrentQuery=makeRelatedQuery(title);
     relatedSeenIds=new Set();
     relatedRequestVersion++;
@@ -1815,84 +1952,111 @@ function formatNumber(value){
    ================================================= */
 
 async function loadRelatedVideos(title){
-
     if(loadingRelated) loadingRelated=false;
     loadingRelated=true;
     const requestVersion=relatedRequestVersion;
     const videoAtRequest=currentVideoId;
-
+    relatedActiveQueries={
+        dance:pickQuery(HOME_DANCE_QUERIES),
+        bhojpuri:pickQuery(HOME_BHOJPURI_QUERIES),
+        wedding:pickQuery(HOME_WEDDING_QUERIES)
+    };
+    const queries=relatedActiveQueries;
+    const makeUrl=(query,count)=>"https://www.googleapis.com/youtube/v3/search"+
+        "?part=snippet&q="+encodeURIComponent(query)+"&type=video&maxResults="+count+
+        "&regionCode=BD&relevanceLanguage=bn&videoEmbeddable=true&order=relevance&key="+encodeURIComponent(API_KEY);
     try{
-
-        relatedCurrentQuery=makeRelatedQuery(title);
-        const url=
-            "https://www.googleapis.com/youtube/v3/search"+
-            "?part=snippet"+
-            "&q="+encodeURIComponent(relatedCurrentQuery)+
-            "&type=video"+
-            "&maxResults=20"+
-            "&regionCode=BD"+
-            "&relevanceLanguage=bn"+
-            "&videoEmbeddable=true"+
-            "&order=relevance"+
-            "&key="+encodeURIComponent(API_KEY);
-
-        const response=await jawraFetch(url);
-        const data=await response.json();
-        if(!response.ok) throw new Error(data.error?.message||"YouTube API error");
-        // Ignore an old response if the user has already selected another video.
+        const requests=await Promise.all([
+            jawraFetch(makeUrl(queries.dance,16)).then(async r=>({kind:"dance",response:r,data:await r.json()})),
+            jawraFetch(makeUrl(queries.bhojpuri,2)).then(async r=>({kind:"bhojpuri",response:r,data:await r.json()})),
+            jawraFetch(makeUrl(queries.wedding,2)).then(async r=>({kind:"wedding",response:r,data:await r.json()}))
+        ]);
         if(requestVersion!==relatedRequestVersion || videoAtRequest!==currentVideoId) return;
-
-        relatedPageToken=data.nextPageToken||"";
-        const filtered=(data.items||[]).filter(item=>{
-            const id=item.id?.videoId;
-            return id && id!==currentVideoId && !jawraHomeVideoIds.has(id) && !relatedSeenIds.has(id);
-        });
-
         const container=document.getElementById("relatedResults");
         if(container) container.innerHTML="";
-        const added=appendRelatedResults(filtered);
-
-        // A title can be too specific or unavailable. Use one broad Bangladesh music
-        // search only when the first request produced no usable recommendations.
-        if(added===0 && requestVersion===relatedRequestVersion && videoAtRequest===currentVideoId){
-            relatedCurrentQuery="Bangla music video Bangladesh";
-            const fallbackUrl="https://www.googleapis.com/youtube/v3/search"+
-                "?part=snippet&q="+encodeURIComponent(relatedCurrentQuery)+
-                "&type=video&maxResults=20&regionCode=BD&relevanceLanguage=bn"+
-                "&videoEmbeddable=true&order=relevance&key="+encodeURIComponent(API_KEY);
-            const fallbackResponse=await jawraFetch(fallbackUrl);
-            const fallbackData=await fallbackResponse.json();
-            if(!fallbackResponse.ok) throw new Error(fallbackData.error?.message||"YouTube API error");
-            if(requestVersion!==relatedRequestVersion || videoAtRequest!==currentVideoId) return;
-            relatedPageToken=fallbackData.nextPageToken||"";
-            const fallbackItems=(fallbackData.items||[]).filter(item=>{
-                const id=item.id?.videoId;
-                return id && id!==currentVideoId && !jawraHomeVideoIds.has(id) && !relatedSeenIds.has(id);
-            });
-            const fallbackAdded=appendRelatedResults(fallbackItems);
-            if(!fallbackAdded && container) container.innerHTML='<div class="related-loading">এই মুহূর্তে নতুন ভিডিও পাওয়া যায়নি। পরে আবার চেষ্টা করো।</div>';
+        const mixed=[];
+        const relatedUniqueIds=new Set();
+        const collectFreshRelated=(items)=>{
+            for(const item of (items||[])){
+                const id=String(item?.id?.videoId||"");
+                const title=item?.snippet?.title||"";
+                if(!id || relatedUniqueIds.has(id) || id===String(currentVideoId) ||
+                   jawraPlayedVideoIds.has(id) || jawraHomeVideoIds.has(id) ||
+                   jawraRelatedHistory.has(id) || isSameRelatedSong(title)) continue;
+                relatedUniqueIds.add(id);
+                mixed.push(item);
+            }
+        };
+        relatedCategoryTokens={dance:"",bhojpuri:"",wedding:""};
+        for(const result of requests){
+            if(!result.response.ok) throw new Error(result.data.error?.message||"YouTube API error");
+            relatedCategoryTokens[result.kind]=result.data.nextPageToken||"";
+            collectFreshRelated(result.data.items||[]);
         }
 
+        // Try alternate search phrases before rendering an empty or repetitive list.
+        let retry=0;
+        while(mixed.length<8 && retry<3){
+            retry++;
+            const qDance=pickQuery(HOME_DANCE_QUERIES.filter(q=>q!==relatedActiveQueries.dance));
+            const qBhojpuri=pickQuery(HOME_BHOJPURI_QUERIES.filter(q=>q!==relatedActiveQueries.bhojpuri));
+            const qWedding=pickQuery(HOME_WEDDING_QUERIES.filter(q=>q!==relatedActiveQueries.wedding));
+            const retryResponses=await Promise.all([
+                jawraFetch(makeUrl(qDance,16)),
+                jawraFetch(makeUrl(qBhojpuri,2)),
+                jawraFetch(makeUrl(qWedding,2))
+            ]);
+            const retryData=await Promise.all(retryResponses.map(r=>r.json()));
+            if(requestVersion!==relatedRequestVersion || videoAtRequest!==currentVideoId) return;
+            collectFreshRelated(retryData[0].items||[]);
+            collectFreshRelated(retryData[1].items||[]);
+            collectFreshRelated(retryData[2].items||[]);
+            relatedActiveQueries={dance:qDance,bhojpuri:qBhojpuri,wedding:qWedding};
+            relatedCategoryTokens={
+                dance:retryData[0].nextPageToken||"",
+                bhojpuri:retryData[1].nextPageToken||"",
+                wedding:retryData[2].nextPageToken||""
+            };
+        }
+        relatedPageToken=relatedCategoryTokens.dance||relatedCategoryTokens.bhojpuri||relatedCategoryTokens.wedding;
+        appendRelatedResults(shuffleArray(mixed));
     }catch(error){
         if(requestVersion===relatedRequestVersion && videoAtRequest===currentVideoId){
             const container=document.getElementById("relatedResults");
             if(container) container.innerHTML='<div class="related-loading">ভিডিও লিস্ট লোড করা যায়নি। ইন্টারনেট বা YouTube API পরীক্ষা করো।</div>';
         }
-
     }finally{
         if(requestVersion===relatedRequestVersion) loadingRelated=false;
     }
 }
 
-function makeRelatedQuery(title){
-    const clean=decodeHtml(title)
+function normalizeRelatedSongTitle(value){
+    return decodeHtml(value || "")
+        .toLowerCase()
         .replace(/\[[^\]]*\]|\([^)]*\)/g," ")
+        .replace(/official|music|video|lyric|lyrics|audio|4k|hd|full|song|বাংলা গান|অফিসিয়াল|ভিডিও|লিরিক্স|অডিও/g," ")
         .replace(/[^\u0980-\u09FFa-zA-Z0-9\s]/g," ")
         .replace(/\s+/g," ")
         .trim();
-    const words=clean.split(" ").filter(Boolean);
-    // Keep enough identifying words for relevance while avoiding an overly long query.
-    return words.slice(0,8).join(" ") || "Bangla music video Bangladesh";
+}
+
+function isSameRelatedSong(candidateTitle){
+    const current=normalizeRelatedSongTitle(currentTitle);
+    const candidate=normalizeRelatedSongTitle(candidateTitle);
+    if(!current || !candidate) return false;
+    if(current===candidate || current.includes(candidate) || candidate.includes(current)) return true;
+
+    const a=[...new Set(current.split(" ").filter(Boolean))];
+    const b=[...new Set(candidate.split(" ").filter(Boolean))];
+    if(Math.min(a.length,b.length)<3) return false;
+    const common=a.filter(word=>b.includes(word)).length;
+    return common/Math.min(a.length,b.length)>=0.75;
+}
+
+function makeRelatedQuery(title){
+    // Do not search using the currently playing song title; that makes YouTube
+    // return the same song/remixes repeatedly while scrolling.
+    return "Bangla music video Bangladesh";
 }
 
 function appendRelatedResults(items){
@@ -1907,13 +2071,14 @@ function appendRelatedResults(items){
 
         const videoId=item.id?.videoId;
 
-        if(!videoId || videoId===currentVideoId || jawraHomeVideoIds.has(videoId) || relatedSeenIds.has(videoId)) return;
-        relatedSeenIds.add(videoId);
-
         const title =
             decodeHtml(
                 item.snippet?.title || ""
             );
+
+        if(!videoId || videoId===currentVideoId || isSameRelatedSong(title) || jawraPlayedVideoIds.has(String(videoId)) || jawraHomeVideoIds.has(videoId) || jawraRelatedHistory.has(String(videoId)) || relatedSeenIds.has(videoId)) return;
+        relatedSeenIds.add(videoId);
+        jawraRememberRelated(videoId);
 
         const channel =
             decodeHtml(
@@ -1929,6 +2094,7 @@ function appendRelatedResults(items){
             document.createElement("div");
 
         card.className="related-video";
+        card.dataset.videoId=String(videoId);
 
         card.onclick=()=>{
 
@@ -1983,6 +2149,7 @@ function appendRelatedResults(items){
         added++;
 
     });
+    loadChannelAvatars(items);
     return added;
 }
 
@@ -2017,59 +2184,33 @@ document
 
 
 async function loadMoreRelated(){
-
-    if(
-        loadingRelated ||
-        !relatedPageToken ||
-        !currentTitle
-    ){
-        return;
-    }
-
+    if(loadingRelated || !currentTitle ||
+       (!relatedCategoryTokens.dance && !relatedCategoryTokens.bhojpuri && !relatedCategoryTokens.wedding)) return;
     loadingRelated=true;
     const requestVersion=relatedRequestVersion;
     const videoAtRequest=currentVideoId;
-
+    const makeUrl=(query,token,count)=>"https://www.googleapis.com/youtube/v3/search"+
+        "?part=snippet&q="+encodeURIComponent(query)+"&type=video&maxResults="+count+
+        "&regionCode=BD&relevanceLanguage=bn&videoEmbeddable=true&pageToken="+encodeURIComponent(token)+
+        "&key="+encodeURIComponent(API_KEY);
     try{
-
-        const query=relatedCurrentQuery || makeRelatedQuery(currentTitle);
-
-        const url =
-            "https://www.googleapis.com/youtube/v3/search"+
-            "?part=snippet"+
-            "&q="+
-            encodeURIComponent(query)+
-            "&type=video"+
-            "&maxResults=20"+
-            "&regionCode=BD"+
-            "&relevanceLanguage=bn"+
-            "&videoEmbeddable=true"+
-            "&pageToken="+
-            encodeURIComponent(
-                relatedPageToken
-            )+
-            "&key="+
-            encodeURIComponent(API_KEY);
-
-        const response =
-            await jawraFetch(url);
-
-        const data =
-            await response.json();
-
-        if(!response.ok) throw new Error(data.error?.message||"YouTube API error");
+        const requests=[];
+        if(relatedCategoryTokens.dance) requests.push(jawraFetch(makeUrl(relatedActiveQueries.dance,relatedCategoryTokens.dance,16)).then(async r=>({kind:"dance",response:r,data:await r.json()})));
+        if(relatedCategoryTokens.bhojpuri) requests.push(jawraFetch(makeUrl(relatedActiveQueries.bhojpuri,relatedCategoryTokens.bhojpuri,2)).then(async r=>({kind:"bhojpuri",response:r,data:await r.json()})));
+        if(relatedCategoryTokens.wedding) requests.push(jawraFetch(makeUrl(relatedActiveQueries.wedding,relatedCategoryTokens.wedding,2)).then(async r=>({kind:"wedding",response:r,data:await r.json()})));
+        const pages=await Promise.all(requests);
         if(requestVersion!==relatedRequestVersion || videoAtRequest!==currentVideoId) return;
-
-        relatedPageToken=data.nextPageToken||"";
-        appendRelatedResults(data.items||[]);
-
+        const more=[];
+        for(const page of pages){
+            if(!page.response.ok) throw new Error(page.data.error?.message||"YouTube API error");
+            relatedCategoryTokens[page.kind]=page.data.nextPageToken||"";
+            more.push(...(page.data.items||[]));
+        }
+        relatedPageToken=relatedCategoryTokens.dance||relatedCategoryTokens.bhojpuri||relatedCategoryTokens.wedding;
+        appendRelatedResults(shuffleArray(more));
     }catch(e){}
-    finally{
-        if(requestVersion===relatedRequestVersion) loadingRelated=false;
-    }
-
+    finally{if(requestVersion===relatedRequestVersion) loadingRelated=false;}
 }
-
 
 /* =================================================
    😈 BACKGROUND MODE
