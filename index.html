@@ -860,8 +860,7 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
         <div style="font-size:34px">✦</div>
         <div style="letter-spacing:3px;font-size:12px;margin:8px 0 14px">JAWRA MUSIC · PREMIUM</div>
         <strong style="font-size:clamp(22px,6vw,30px);color:#fff">YouTube API কোটা শেষ</strong>
-        <p id="" style="margin:12px 0;color:#ddd">ভিডিও সার্চ সাময়িকভাবে বন্ধ আছে।</p>
-        <div id="quotaClock">রিসেট হতে বাকি সময় হিসাব হচ্ছে…</div>
+ <p id="" style="margin:12px 0;color:#ddd">ভিডিও সার্চ সাময়িকভাবে বন্ধ আছে।</p><div id="quotaClock">রিসেট হতে বাকি সময় হিসাব হচ্ছে…</div>
         <div id="quotaDetails">
         </div>
         <div class="">
@@ -873,7 +872,7 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
       <div class="loading">
         <div class="loading-spinner">
         </div>
-        Loding video's'...
+         Loding video's'...
       </div>
     </div>
     <!-- ================= PLAYER ================= -->
@@ -2941,7 +2940,7 @@ function startJawraVoiceAssistant(){
 }
 function saveJawraGroqKey(){jawraOpenKeyDialog()}
 let jawraRelatedOriginalParent=null,jawraRelatedOriginalNext=null;
-function showLandscapeMore(){const panel=document.getElementById('jluMorePanel');if(!panel)return;panel.classList.add('show');panel.innerHTML='<button type="button" onclick="hideLandscapeMore()" aria-label="Close more videos">✕</button><strong>More videos</strong><div id="jluRelatedMount"></div>';const related=document.getElementById('relatedResults'),mount=document.getElementById('jluRelatedMount');if(related&&mount){if(!jawraRelatedOriginalParent){jawraRelatedOriginalParent=related.parentElement;jawraRelatedOriginalNext=related.nextSibling;}mount.appendChild(related);related.style.display='grid'}}
+function showLandscapeMore(){const panel=document.getElementById('jluMorePanel');if(!panel)return;panel.classList.add('show');panel.innerHTML='<button type="button" onclick="hideLandscapeMore()" aria-label="Close more videos">✕</button><strong>More videos</strong><div id="jluRelatedMount"></div>';const related=document.getElementById('relatedResults'),mount=document.getElementById('jluRelatedMount');if(related&&mount){if(!jawraRelatedOriginalParent){jawraRelatedOriginalParent=related.parentElement;jawraRelatedOriginalNext=related.nextSibling;}mount.appendChild(related);related.style.display='grid'}if(!panel.dataset.jawraInAppPlayBound){panel.dataset.jawraInAppPlayBound='1';panel.addEventListener('click',function(event){const card=event.target.closest('#jluRelatedMount .related-video[data-video-id]');if(!card)return;event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();const id=card.dataset.videoId;const title=card.querySelector('.title')?.textContent?.trim()||'Video';const channel=card.querySelector('.meta')?.textContent?.trim()||'YouTube';const thumb=card.querySelector('img.thumbnail')?.getAttribute('src')||'';if(id)playVideo(id,title,channel,thumb);},true)}}
 function hideLandscapeMore(){const panel=document.getElementById('jluMorePanel');if(!panel)return;panel.classList.remove('show');const related=document.getElementById('relatedResults');if(related&&jawraRelatedOriginalParent&&related.parentElement!==jawraRelatedOriginalParent){if(jawraRelatedOriginalNext&&jawraRelatedOriginalNext.parentNode===jawraRelatedOriginalParent)jawraRelatedOriginalParent.insertBefore(related,jawraRelatedOriginalNext);else jawraRelatedOriginalParent.appendChild(related)}panel.innerHTML='<button type="button" onclick="hideLandscapeMore()">✕</button><strong>More videos</strong>'}
 function jawraStopAllPlayback(){['ytFrame','miniFrame','popupFrame'].forEach(id=>{const f=document.getElementById(id);if(f)f.src='about:blank'});document.getElementById('miniPlayer')?.classList.remove('show');document.getElementById('popupOverlay')?.classList.remove('show')}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){jawraStopAssistant();jawraStopAllPlayback()}});window.addEventListener('pagehide',()=>{jawraStopAssistant();jawraStopAllPlayback()});
