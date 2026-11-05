@@ -466,6 +466,12 @@ button{
 #quotaBanner .quota-actions button.secondary{background:#141414;color:#8ffcff;border:1px solid #9b7b25}
 #quotaClock{font-variant-numeric:tabular-nums;letter-spacing:.3px;font-weight:800;color:#b8ffff;margin:12px 0 4px}
 #quotaDetails{font-size:12px;color:#bcbcbc;line-height:1.65}
+#quotaBanner .quota-card{width:min(92vw,430px);max-height:100%;overflow:auto;padding:20px 16px}
+#quotaBanner button:disabled{opacity:.42;filter:grayscale(1);cursor:not-allowed}
+#quotaBanner .quota-list{display:grid;grid-template-columns:1fr 1fr;gap:5px 12px;text-align:left;margin:8px auto 10px;max-width:330px}
+#quotaBanner .quota-row{display:flex;align-items:center;justify-content:space-between;gap:5px;font-size:10px;line-height:1.35;padding:4px 6px;border:1px solid #ffffff16;border-radius:7px;background:#ffffff08;color:#d8ffff}
+#quotaBanner .quota-row strong{font-size:10px;letter-spacing:.2px;color:#8ffcff;font-variant-numeric:tabular-nums;white-space:nowrap}
+
 .search button[aria-label="Voice search"]{position:relative;flex:0 0 46px!important;width:46px!important;height:42px!important;margin:3px 0 3px 1px!important;border:1px solid #b8ffff!important;border-radius:14px!important;background:radial-gradient(circle at 30% 15%,#d7ffff 0%,#35e6e6 48%,#087b86 100%)!important;color:#171000!important;box-shadow:inset 0 1px 1px #fff8,0 3px 12px #35e6e640!important;display:inline-flex;align-items:center;justify-content:center;padding:0!important;transition:transform .16s,box-shadow .16s}
 .search button[aria-label="Voice search"]:active{transform:scale(.94);box-shadow:inset 0 2px 5px #0005!important}
 .search button[aria-label="Voice search"] svg{width:22px;height:22px;filter:drop-shadow(0 1px 1px #fff4)}
@@ -852,27 +858,20 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
         <div style="font-size:62px">📡</div>
         <h2>NO INTERNET</h2>
         <p style="font-weight:400;color:#eee">JAWRA MUSIC কিরে মালগের নাতী,এমনিতে লিমিট দেওয়া কত মিনিট বিডিও দেখতে পারবি দৈনিক, তার উপর আবার ইন্টারনেট ছাড়া আসছোছ সালা ফকিন্নি সর এখান থেকে,😒 </p>
-        <button onclick="retryNetwork()"Try again</button>
+        <button onclick="retryNetwork()">Try again</button>
       </div>
     </div>
-    <div id="quotaBanner">
+    <div id="quotaBanner" aria-live="polite">
       <div class="quota-card">
-        <div style="font-size:34px">✦</div>
-        <div style="letter-spacing:3px;font-size:12px;margin:8px 0 14px">JAWRA MUSIC · PREMIUM</div>
-        <strong style="font-size:clamp(22px,6vw,30px);color:#fff">YouTube API কোটা শেষ</strong>
- <p id="" style="margin:12px 0;color:#ddd">ভিডিও সার্চ সাময়িকভাবে বন্ধ আছে।</p><div id="quotaClock">রিসেট হতে বাকি সময় হিসাব হচ্ছে…</div>
-        <div id="quotaDetails">
-        </div>
-        <div class="">
-          <button class="secondary" onclick="saveCurrentVideo()">✦ বর্তমান ভিডিও Save</button>
-        </div>
+        <div style="font-size:30px">✦</div>
+        <strong>API LIMIT</strong>
       </div>
     </div>
     <div id="results">
       <div class="loading">
         <div class="loading-spinner">
         </div>
-         Loding video's'...
+        Loding video's'...
       </div>
     </div>
     <!-- ================= PLAYER ================= -->
@@ -1033,10 +1032,16 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
 async function jawraFetch(url, timeoutMs=16000){
   const controller=typeof AbortController!=="undefined"?new AbortController():null;
   let timer=null;
+  const requestApiIndex=activeApiIndex;
   try{
     const options=controller?{signal:controller.signal,cache:"no-store"}:{cache:"no-store"};
     if(controller)timer=setTimeout(()=>controller.abort(),timeoutMs);
-    return await fetch(url,options);
+    const response=await fetch(url,options);
+    if(!response.ok && String(url).includes('googleapis.com/youtube/')){
+      const payload=await response.clone().json().catch(()=>null);
+      if(payload)handleJawraApiQuotaError(requestApiIndex,payload);
+    }
+    return response;
   }finally{if(timer)clearTimeout(timer);}
 }
 
@@ -1044,8 +1049,26 @@ async function jawraFetch(url, timeoutMs=16000){
    API KEY
    ================================================= */
 
-const API_KEY =
-    "AIzaSyB0v6AdruCXxW4ZS_xKCrB8cnc6TItXwCs";
+// Eight YouTube Data API keys. API 1-7 are the keys supplied for this update;
+// API 8 is the key that was already present in the original HTML.
+const API_KEYS = [
+  "AIzaSyB6-QQKKQ_lyNkpfhneD7t9dQbSqxsdIPY",
+  "AIzaSyAYc77MXE2wJywAN-scLURq_AKUZQmBBYU",
+  "AIzaSyBTh1TB43PXoGtAqt_rF-YguSCfgQWVYic",
+  "AIzaSyCjGCOat9acPqrCv9u4jPVZxxKSYg_2j6Q",
+  "AIzaSyBPvphk-RHpuJYIiKWXYPdQMEE_tFcbaRs",
+  "AIzaSyAfnlIoO80DYZ7l2fv7q9SxcXSiflaPduc",
+  "AIzaSyBG6M1P9maQSCzifFmNsKanLICs-sbIa50",
+  "AIzaSyB0v6AdruCXxW4ZS_xKCrB8cnc6TItXwCs"
+];
+const JAWRA_API_STATE_KEY = "jawra_youtube_api_quota_v1";
+const JAWRA_ACTIVE_API_KEY = "jawra_youtube_active_api_v1";
+let activeApiIndex = 0;
+try {
+  const savedIndex = Number(localStorage.getItem(JAWRA_ACTIVE_API_KEY));
+  if (Number.isInteger(savedIndex) && savedIndex >= 0 && savedIndex < API_KEYS.length) activeApiIndex = savedIndex;
+} catch (_) {}
+let API_KEY = API_KEYS[activeApiIndex];
 
 
 /* =================================================
@@ -1103,6 +1126,139 @@ window.addEventListener("load",()=>{
 
 let jawraQuotaLocked=false;
 let jawraQuotaClockTimer=null;
+let jawraApiQuotaState={};
+function loadJawraApiQuotaState(){
+  try{jawraApiQuotaState=JSON.parse(localStorage.getItem(JAWRA_API_STATE_KEY)||"{}");}
+  catch(_e){jawraApiQuotaState={};}
+  if(!jawraApiQuotaState || typeof jawraApiQuotaState!=="object") jawraApiQuotaState={};
+  refreshJawraApiQuotaState();
+}
+function saveJawraApiQuotaState(){
+  try{localStorage.setItem(JAWRA_API_STATE_KEY,JSON.stringify(jawraApiQuotaState));}catch(_e){}
+}
+function refreshJawraApiQuotaState(){
+  const now=Date.now(); let changed=false;
+  for(let i=0;i<API_KEYS.length;i++){
+    const until=Number(jawraApiQuotaState[i]||0);
+    if(until && until<=now){delete jawraApiQuotaState[i];changed=true;}
+  }
+  if(changed) saveJawraApiQuotaState();
+}
+function isJawraApiExhausted(index){refreshJawraApiQuotaState();return Number(jawraApiQuotaState[index]||0)>Date.now();}
+function getJawraAvailableApiIndex(){refreshJawraApiQuotaState();for(let i=0;i<API_KEYS.length;i++)if(!isJawraApiExhausted(i))return i;return -1;}
+function getJawraAllApiResetInfo(){
+  refreshJawraApiQuotaState();
+  return API_KEYS.map((_,i)=>({index:i,until:Number(jawraApiQuotaState[i]||0),remaining:Math.max(0,Number(jawraApiQuotaState[i]||0)-Date.now())}));
+}
+function getQuotaResetInfo(){
+  const now=new Date();
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
+  const get=k=>parts.find(p=>p.type===k)?.value;
+  const y=Number(get('year')),m=Number(get('month')),d=Number(get('day'));
+  // Start with 08:00 UTC, then adjust to the next midnight in Los Angeles (PST/PDT).
+  let target=Date.UTC(y,m-1,d+1,8,0,0);
+  const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+  const q=fmt.formatToParts(new Date(target));
+  const hh=Number(q.find(p=>p.type==='hour')?.value||0);
+  const mm=Number(q.find(p=>p.type==='minute')?.value||0);
+  const ss=Number(q.find(p=>p.type==='second')?.value||0);
+  target-=(hh*3600+mm*60+ss)*1000;
+  if(target<=now.getTime()) target+=24*60*60*1000;
+  return {now,target,ms:Math.max(0,target-now.getTime())};
+}
+function formatJawraCountdown(ms){
+  const total=Math.max(0,Math.floor(ms/1000));
+  const h=Math.floor(total/3600),m=Math.floor((total%3600)/60),sec=total%60;
+  return [h,m,sec].map(v=>String(v).padStart(2,'0')).join(' : ');
+}
+function renderQuotaBanner(){
+  const banner=document.getElementById('quotaBanner');
+  const card=banner?.querySelector('.quota-card');
+  if(!banner||!card)return;
+  refreshJawraApiQuotaState();
+  const next=getJawraAvailableApiIndex();
+  const allKeysMode=jawraApiQuotaState._allExhausted===true;
+  if(next>=0 && !allKeysMode){
+    card.innerHTML=`<div style="font-size:30px">✦</div>
+      <div style="letter-spacing:2px;font-size:10px;margin:7px 0 12px">JAWRA MUSIC · API LIMIT</div>
+      <strong style="font-size:clamp(17px,4.6vw,23px);color:#fff">API LIMIT</strong>
+      <p style="font-size:12px;line-height:1.55;margin:10px 0;color:#ddd">Limit শেষ হওয়ার কারণে ভিডিও লোড বন্ধ হয়ে গেছে। আবার চালু করতে ক্লিক 👇</p>
+      <button type="button" onclick="activateJawraApiKey(${next})">API KEY ${next+1} ACTIVE NOW</button>`;
+  }else{
+    const rows=getJawraAllApiResetInfo().map(item=>`<div class="quota-row"><span>API ${item.index+1}</span><strong>${formatJawraCountdown(item.remaining)}</strong></div>`).join('');
+    const ready=getJawraAllApiResetInfo().every(item=>item.remaining<=0);
+    card.innerHTML=`<div style="font-size:25px">✦</div>
+      <div style="letter-spacing:2px;font-size:10px;margin:5px 0 8px">JAWRA MUSIC · API LIMIT</div>
+      <strong style="font-size:clamp(16px,4vw,21px);color:#fff">ALL API LIMIT EXHAUSTED</strong>
+      <p style="font-size:10px;line-height:1.35;margin:7px 0 9px;color:#ddd">সব API Key Reset হওয়ার সময়</p>
+      <div id="quotaDetails" class="quota-list">${rows}</div>
+      <button type="button" id="quotaTryAgain" onclick="tryAgainJawraApis()" ${ready?'':'disabled'} style="${ready?'':'opacity:.42;filter:grayscale(1);cursor:not-allowed'}">TRY AGAIN</button>`;
+  }
+  banner.classList.add('show');
+}
+function showQuotaBanner(){
+  jawraQuotaLocked=true;
+  renderQuotaBanner();
+  if(jawraQuotaClockTimer)clearInterval(jawraQuotaClockTimer);
+  jawraQuotaClockTimer=setInterval(updateQuotaClock,1000);
+}
+function updateQuotaClock(){
+  if(!jawraQuotaLocked)return;
+  refreshJawraApiQuotaState();
+  const next=getJawraAvailableApiIndex();
+  if(next<0 || jawraApiQuotaState._allExhausted===true){
+    const ready=getJawraAllApiResetInfo().every(item=>item.remaining<=0);
+    const btn=document.getElementById('quotaTryAgain');
+    if(btn){btn.disabled=!ready;btn.style.opacity=ready?'1':'.42';btn.style.filter=ready?'none':'grayscale(1)';btn.style.cursor=ready?'pointer':'not-allowed';}
+    const list=document.getElementById('quotaDetails');
+    if(list)list.innerHTML=getJawraAllApiResetInfo().map(item=>`<div class="quota-row"><span>API ${item.index+1}</span><strong>${formatJawraCountdown(item.remaining)}</strong></div>`).join('');
+  }
+}
+function markJawraApiExhausted(index){
+  const reset=getQuotaResetInfo().target;
+  jawraApiQuotaState[index]=reset;
+  if(API_KEYS.every((_,i)=>Number(jawraApiQuotaState[i]||0)>Date.now())) jawraApiQuotaState._allExhausted=true;
+  saveJawraApiQuotaState();
+  showQuotaBanner();
+}
+function activateJawraApiKey(index){
+  if(index<0||index>=API_KEYS.length||isJawraApiExhausted(index))return;
+  activeApiIndex=index;API_KEY=API_KEYS[index];
+  try{localStorage.setItem(JAWRA_ACTIVE_API_KEY,String(index));}catch(_e){}
+  jawraQuotaLocked=false;hideQuotaBanner();
+  if(jawraQuotaClockTimer){clearInterval(jawraQuotaClockTimer);jawraQuotaClockTimer=null;}
+  retryJawraCurrentFeed();
+}
+function tryAgainJawraApis(){
+  refreshJawraApiQuotaState();
+  if(jawraApiQuotaState._allExhausted!==true || getJawraAllApiResetInfo().some(item=>item.remaining>0))return;
+  delete jawraApiQuotaState._allExhausted;saveJawraApiQuotaState();
+  activeApiIndex=0;API_KEY=API_KEYS[0];
+  try{localStorage.setItem(JAWRA_ACTIVE_API_KEY,'0');}catch(_e){}
+  jawraQuotaLocked=false;hideQuotaBanner();
+  if(jawraQuotaClockTimer){clearInterval(jawraQuotaClockTimer);jawraQuotaClockTimer=null;}
+  retryJawraCurrentFeed();
+}
+function retryJawraCurrentFeed(){
+  if(!navigator.onLine){updateNetworkBanner();return;}
+  if(document.getElementById('playerOverlay')?.classList.contains('show') && currentTitle){
+    loadRelatedVideos(currentTitle);
+    if(currentVideoId)loadVideoStats(currentVideoId);
+  }else if(currentMode==='search')searchMusic();
+  else loadHomeVideos();
+}
+function hideQuotaBanner(){document.getElementById('quotaBanner')?.classList.remove('show');}
+function handleJawraApiQuotaError(index,errorData){
+  const err=errorData?.error||errorData||{};
+  const reasons=(err.errors||[]).map(x=>String(x.reason||'')).join(' ');
+  const message=String(err.message||'');
+  const code=String(err.status||'');
+  if(/quotaExceeded|dailyLimitExceeded|dailyLimitExceededUnreg/i.test(reasons+' '+code+' '+message)){
+    markJawraApiExhausted(index);
+    return true;
+  }
+  return false;
+}
 function startVoiceSearch(){
   if(jawraQuotaLocked){showQuotaBanner();return;}
   const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -1117,32 +1273,9 @@ function startVoiceSearch(){
 }
 function updateNetworkBanner(){const b=document.getElementById("networkBanner");const saved=document.getElementById("savedScreen");if(b)b.style.display=(navigator.onLine||saved?.classList.contains("show"))?"none":"flex";}
 function retryNetwork(){updateNetworkBanner();if(navigator.onLine&&!jawraQuotaLocked){loadHomeVideos();}}
-function getQuotaResetInfo(){
-  const now=new Date();
-  // YouTube Data API daily quota normally resets at midnight Pacific Time.
-  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
-  const get=k=>parts.find(p=>p.type===k)?.value;
-  const y=Number(get('year')),m=Number(get('month')),d=Number(get('day'));
-  const pacificMidnightUtc=Date.UTC(y,m-1,d+1,8,0,0); // midnight PST; DST adjustment below
-  // Next calendar day in Pacific time; correct UTC offset for daylight saving time below.
-  let target=Date.UTC(y,m-1,d+1,8,0,0);
-  const fmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
-  const q=fmt.formatToParts(new Date(target));const hh=Number(q.find(p=>p.type==='hour')?.value||0);
-  target-=hh*3600000;
-  if(target<=now.getTime()) target=pacificMidnightUtc;
-  return {now,target,ms:Math.max(0,target-now.getTime())};
-}
-function updateQuotaClock(){
- const clock=document.getElementById('quotaClock'),details=document.getElementById('quotaDetails');if(!clock||!details)return;
- const info=getQuotaResetInfo(),total=Math.floor(info.ms/1000),days=Math.floor(total/86400),hours=Math.floor((total%86400)/3600),mins=Math.floor((total%3600)/60),secs=total%60;
- clock.textContent=`রিসেট হতে বাকি: ${days} দিন ${hours} ঘণ্টা ${mins} মিনিট ${secs} সেকেন্ড`;
- const dateText=new Intl.DateTimeFormat('bn-BD',{timeZone:'Asia/Dhaka',weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(info.now);
- const timeText=new Intl.DateTimeFormat('bn-BD',{timeZone:'Asia/Dhaka',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true}).format(info.now);
- details.textContent=`আজ: ${dateText} · সময়: ${timeText} · নেটওয়ার্ক: ${navigator.onLine?'সংযুক্ত':'অফলাইন'} · রিসেটের হিসাব: Pacific Time অনুযায়ী`;
-}
-function showQuotaBanner(message){jawraQuotaLocked=true;const b=document.getElementById("quotaBanner");const m=document.getElementById("quotaMessage");if(m&&message)m.textContent=message;if(b)b.classList.add("show");updateQuotaClock();if(jawraQuotaClockTimer)clearInterval(jawraQuotaClockTimer);jawraQuotaClockTimer=setInterval(updateQuotaClock,1000);}
-function hideQuotaBanner(){document.getElementById("quotaBanner")?.classList.remove("show");}
-// When quota is exhausted, only Save and Saved remain usable. Any other app action reopens the notice.
+loadJawraApiQuotaState();
+window.addEventListener('load',()=>{if(jawraApiQuotaState._allExhausted===true || isJawraApiExhausted(activeApiIndex))showQuotaBanner();});
+// Quota lock prevents all normal controls from bypassing the required manual API switch.
 document.addEventListener('click',function(e){
  if(!jawraQuotaLocked)return;
  const el=e.target?.closest?.('button,a,[role="button"]');
@@ -2839,7 +2972,8 @@ async function startJawraVoiceAssistant(){
    START
    ================================================= */
 
-loadHomeVideos();
+if(jawraApiQuotaState._allExhausted===true || isJawraApiExhausted(activeApiIndex)) showQuotaBanner();
+else loadHomeVideos();
 
 </script><script>
 if ("serviceWorker" in navigator) {
