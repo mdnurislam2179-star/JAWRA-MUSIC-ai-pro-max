@@ -1060,9 +1060,10 @@ async function jawraFetch(url, timeoutMs=16000){
       const code=String(err.status||'');
       const quotaError=/quotaExceeded|dailyLimitExceeded|rateLimitExceeded/i.test(reasons+' '+code+' '+message);
       const keyError=/keyInvalid|API key not valid|accessNotConfigured|forbidden|serviceDisabled/i.test(reasons+' '+code+' '+message);
+      jawraApiLastError='API '+(requestApiIndex+1)+': '+(message||reasons||code||('HTTP '+response.status));
 
       // Only rotate for errors that are specific to the key or its quota.
-      if(!quotaError && !keyError)return response;
+      if(!quotaError && !keyError){jawraApiLastError='YouTube API HTTP '+response.status+': '+(message||reasons||code||'অজানা সমস্যা');return response;}
 
       const resetAt=quotaError?getQuotaResetInfo().target:(Date.now()+6*60*60*1000);
       jawraApiQuotaState[requestApiIndex]=resetAt;
@@ -1169,6 +1170,7 @@ window.addEventListener("load",()=>{
 let jawraQuotaLocked=false;
 let jawraQuotaClockTimer=null;
 let jawraApiQuotaState={};
+let jawraApiLastError="";
 function loadJawraApiQuotaState(){
   try{jawraApiQuotaState=JSON.parse(localStorage.getItem(JAWRA_API_STATE_KEY)||"{}");}
   catch(_e){jawraApiQuotaState={};}
@@ -1225,6 +1227,7 @@ function renderQuotaBanner(){
       <div style="letter-spacing:2px;font-size:10px;margin:7px 0 12px">JAWRA MUSIC · API LIMIT</div>
       <strong style="font-size:clamp(17px,4.6vw,23px);color:#fff">API LIMIT</strong>
       <p style="font-size:12px;line-height:1.55;margin:10px 0;color:#ddd">Limit শেষ হওয়ার কারণে ভিডিও লোড বন্ধ হয়ে গেছে। আবার চালু করতে ক্লিক 👇</p>
+      ${jawraApiLastError?`<p style="font-size:11px;line-height:1.4;color:#ffcf8a;overflow-wrap:anywhere">কারণ: ${jawraApiLastError.replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</p>`:''}
       <button type="button" onclick="activateJawraApiKey(${next})">API KEY ${next+1} ACTIVE NOW</button>`;
   }else{
     const rows=getJawraAllApiResetInfo().map(item=>`<div class="quota-row"><span>API ${item.index+1}</span><strong>${formatJawraCountdown(item.remaining)}</strong></div>`).join('');
@@ -1267,8 +1270,11 @@ function activateJawraApiKey(index){
   if(index<0||index>=API_KEYS.length||isJawraApiExhausted(index))return;
   activeApiIndex=index;
   API_KEY=API_KEYS[index];
-  // Clear a stale "all exhausted" flag before retrying with the chosen key.
+  // Re-test all keys after an explicit user selection; stale local quota marks
+  // from earlier runs must not prevent trying the configured keys.
+  for(let i=0;i<API_KEYS.length;i++)delete jawraApiQuotaState[i];
   delete jawraApiQuotaState._allExhausted;
+  jawraApiLastError='';
   saveJawraApiQuotaState();
   try{localStorage.setItem(JAWRA_ACTIVE_API_KEY,String(index));}catch(_e){}
   jawraQuotaLocked=false;
