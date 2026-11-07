@@ -862,16 +862,13 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
       </div>
     </div>
     <div id="quotaBanner" aria-live="polite">
-      <div class="quota-card">
-        <div style="font-size:30px">✦</div>
-        <strong>API LIMIT</strong>
-      </div>
+      <div class="quota-card"><div style="font-size:30px">✦</div><strong>API LIMIT</strong></div>
     </div>
     <div id="results">
       <div class="loading">
         <div class="loading-spinner">
         </div>
-        Loding video's'...
+         Loding video's'...
       </div>
     </div>
     <!-- ================= PLAYER ================= -->
@@ -1030,19 +1027,64 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
 
 /* Network requests must fail visibly instead of leaving an endless spinner. */
 async function jawraFetch(url, timeoutMs=16000){
-  const controller=typeof AbortController!=="undefined"?new AbortController():null;
-  let timer=null;
-  const requestApiIndex=activeApiIndex;
-  try{
-    const options=controller?{signal:controller.signal,cache:"no-store"}:{cache:"no-store"};
-    if(controller)timer=setTimeout(()=>controller.abort(),timeoutMs);
-    const response=await fetch(url,options);
-    if(!response.ok && String(url).includes('googleapis.com/youtube/')){
-      const payload=await response.clone().json().catch(()=>null);
-      if(payload)handleJawraApiQuotaError(requestApiIndex,payload);
+  const isYouTubeApi=String(url).includes('googleapis.com/youtube/');
+  const triedKeys=new Set();
+  let lastResponse=null;
+
+  // Try the selected key first. If YouTube rejects it (quota/key/configuration),
+  // switch to the next usable key and retry the exact same request.
+  for(let attempt=0;attempt<(isYouTubeApi?API_KEYS.length:1);attempt++){
+    let requestApiIndex=activeApiIndex;
+    if(triedKeys.has(requestApiIndex) || isJawraApiExhausted(requestApiIndex)){
+      requestApiIndex=API_KEYS.findIndex((_,i)=>!triedKeys.has(i)&&!isJawraApiExhausted(i));
     }
-    return response;
-  }finally{if(timer)clearTimeout(timer);}
+    if(requestApiIndex<0)break;
+    triedKeys.add(requestApiIndex);
+
+    const requestUrl=isYouTubeApi
+      ? String(url).replace(/([?&]key=)[^&]*/,'$1'+encodeURIComponent(API_KEYS[requestApiIndex]))
+      : url;
+    const controller=typeof AbortController!=="undefined"?new AbortController():null;
+    let timer=null;
+    try{
+      const options=controller?{signal:controller.signal,cache:"no-store"}:{cache:"no-store"};
+      if(controller)timer=setTimeout(()=>controller.abort(),timeoutMs);
+      const response=await fetch(requestUrl,options);
+      lastResponse=response;
+      if(response.ok || !isYouTubeApi)return response;
+
+      const payload=await response.clone().json().catch(()=>null);
+      const err=payload?.error||payload||{};
+      const reasons=(err.errors||[]).map(x=>String(x.reason||'')).join(' ');
+      const message=String(err.message||'');
+      const code=String(err.status||'');
+      const quotaError=/quotaExceeded|dailyLimitExceeded|rateLimitExceeded/i.test(reasons+' '+code+' '+message);
+      const keyError=/keyInvalid|API key not valid|accessNotConfigured|forbidden|serviceDisabled/i.test(reasons+' '+code+' '+message);
+
+      // Only rotate for errors that are specific to the key or its quota.
+      if(!quotaError && !keyError)return response;
+
+      const resetAt=quotaError?getQuotaResetInfo().target:(Date.now()+6*60*60*1000);
+      jawraApiQuotaState[requestApiIndex]=resetAt;
+      saveJawraApiQuotaState();
+
+      const next=API_KEYS.findIndex((_,i)=>!triedKeys.has(i)&&!isJawraApiExhausted(i));
+      if(next<0){
+        jawraApiQuotaState._allExhausted=true;
+        saveJawraApiQuotaState();
+        showQuotaBanner();
+        return response;
+      }
+      activeApiIndex=next;
+      API_KEY=API_KEYS[next];
+      try{localStorage.setItem(JAWRA_ACTIVE_API_KEY,String(next));}catch(_e){}
+    }finally{
+      if(timer)clearTimeout(timer);
+    }
+  }
+
+  if(isYouTubeApi && API_KEYS.every((_,i)=>isJawraApiExhausted(i)))showQuotaBanner();
+  return lastResponse;
 }
 
 /* =================================================
@@ -1223,9 +1265,14 @@ function markJawraApiExhausted(index){
 }
 function activateJawraApiKey(index){
   if(index<0||index>=API_KEYS.length||isJawraApiExhausted(index))return;
-  activeApiIndex=index;API_KEY=API_KEYS[index];
+  activeApiIndex=index;
+  API_KEY=API_KEYS[index];
+  // Clear a stale "all exhausted" flag before retrying with the chosen key.
+  delete jawraApiQuotaState._allExhausted;
+  saveJawraApiQuotaState();
   try{localStorage.setItem(JAWRA_ACTIVE_API_KEY,String(index));}catch(_e){}
-  jawraQuotaLocked=false;hideQuotaBanner();
+  jawraQuotaLocked=false;
+  hideQuotaBanner();
   if(jawraQuotaClockTimer){clearInterval(jawraQuotaClockTimer);jawraQuotaClockTimer=null;}
   retryJawraCurrentFeed();
 }
