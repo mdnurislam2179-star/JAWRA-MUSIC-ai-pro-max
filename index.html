@@ -765,11 +765,6 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
           onclick="focusSearch()">
           ⌕
         </button>
-        <button
-          class="menu-button"
-          onclick="toggleBgMenu()">
-          ⋮
-        </button>
       </div>
     </header>
     <!-- ================= BACKGROUND MENU ================= -->
@@ -857,18 +852,21 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
       <div class="network-card">
         <div style="font-size:62px">📡</div>
         <h2>NO INTERNET</h2>
-        <p style="font-weight:400;color:#eee">JAWRA MUSIC কিরে মালগের নাতী,এমনিতে লিমিট দেওয়া কত মিনিট বিডিও দেখতে পারবি দৈনিক, তার উপর আবার ইন্টারনেট ছাড়া আসছোছ সালা ফকিন্নি সর এখান থেকে,😒 </p>
+        <p style="font-weight:400;color:#eee">JAWRA MUSIC কিরে মাংগের নাতী,এমনিতে লিমিট দেওয়া কত মিনিট বিডিও দেখতে পারবি দৈনিক, তার উপর আবার ইন্টারনেট ছাড়া আসছোছ সালা ফকিন্নি সর এখান থেকে,😒 </p>
         <button onclick="retryNetwork()">Try again</button>
       </div>
     </div>
     <div id="quotaBanner" aria-live="polite">
-      <div class="quota-card"><div style="font-size:30px">✦</div><strong>API LIMIT</strong></div>
+      <div class="quota-card">
+        <div style="font-size:30px">✦</div>
+        <strong>API LIMIT</strong>
+      </div>
     </div>
     <div id="results">
       <div class="loading">
         <div class="loading-spinner">
         </div>
-         Loding video's'...
+        Loding video's'...
       </div>
     </div>
     <!-- ================= PLAYER ================= -->
@@ -932,10 +930,6 @@ body.jawra-rotate-mode .jlu-more-panel{display:none!important}
       <span class="stat"
         id="likeCount">
         👍 0
-      </span>
-      <span class="stat"
-        id="commentCount">
-        💬 0
       </span>
     </div>
     <div class="player-more">
@@ -1602,6 +1596,44 @@ function showResults(items){
    VIDEO CARDS
    ================================================= */
 
+function jawraGetLandscapeThumbnail(item){
+    const thumbs=item?.snippet?.thumbnails||{};
+    // Prefer an explicitly widescreen thumbnail. YouTube's high/standard
+    // images are often 4:3 even for ordinary landscape videos.
+    const order=["maxres","standard","medium","high","default"];
+    for(const key of order){
+        const t=thumbs[key];
+        const w=Number(t?.width||0), h=Number(t?.height||0);
+        if(t?.url && w>0 && h>0 && (w/h)>=1.5) return t;
+    }
+    // Missing widescreen metadata is not proof that the video is portrait.
+    const candidates=Object.values(thumbs).filter(t=>t?.url);
+    const measured=candidates.filter(t=>Number(t.width)>0&&Number(t.height)>0);
+    if(measured.length && measured.every(t=>(Number(t.width)/Number(t.height))<1.05)) return null;
+    return thumbs.medium||thumbs.high||thumbs.default||thumbs.standard||thumbs.maxres||null;
+}
+function isLandscapeVideo(item){ return !!jawraGetLandscapeThumbnail(item); }
+
+/* Fetch real YouTube channel profile photos for visible video cards. */
+const jawraChannelAvatarCache=new Map();
+const jawraChannelAvatarPending=new Set();
+async function jawraLoadChannelAvatars(items, root){
+    if(!root?.querySelectorAll) return;
+    const ids=[...new Set((items||[]).map(x=>String(x?.snippet?.channelId||'')).filter(Boolean))];
+    const missing=ids.filter(id=>!jawraChannelAvatarCache.has(id)&&!jawraChannelAvatarPending.has(id));
+    missing.forEach(id=>jawraChannelAvatarPending.add(id));
+    for(let i=0;i<missing.length;i+=50){
+        const batch=missing.slice(i,i+50);
+        try{
+            const url='https://www.googleapis.com/youtube/v3/channels?part=snippet&id='+encodeURIComponent(batch.join(','))+'&key='+encodeURIComponent(API_KEY);
+            const response=await jawraFetch(url), data=await response.json();
+            if(!response.ok) throw new Error(data.error?.message||'Channel avatar lookup failed');
+            (data.items||[]).forEach(ch=>{const t=ch.snippet?.thumbnails||{};const photo=t.default?.url||t.medium?.url||t.high?.url||'';if(photo)jawraChannelAvatarCache.set(String(ch.id),photo);});
+        }catch(_e){}finally{batch.forEach(id=>jawraChannelAvatarPending.delete(id));}
+    }
+    root.querySelectorAll('[data-channel-id]').forEach(row=>{const photo=jawraChannelAvatarCache.get(row.dataset.channelId);const img=row.querySelector('.channel-logo img');if(photo&&img){img.src=photo;row.querySelector('.channel-logo')?.classList.add('has-avatar');}});
+}
+
 function appendResults(items){
 
     const results =
@@ -1609,6 +1641,7 @@ function appendResults(items){
             "results"
         );
 
+    const durationIds=[];
     items.forEach(item=>{
 
         const videoId =
@@ -1617,7 +1650,7 @@ function appendResults(items){
                 ? item.id
                 : "");
 
-        if(!videoId || jawraFeedSeenIds.has(videoId)){
+        if(!videoId || !isLandscapeVideo(item) || jawraFeedSeenIds.has(videoId)){
             return;
         }
         jawraFeedSeenIds.add(videoId);
@@ -1637,8 +1670,9 @@ function appendResults(items){
             );
 
         const thumb =
-            item.snippet?.thumbnails?.high?.url ||
+            jawraGetLandscapeThumbnail(item)?.url ||
             item.snippet?.thumbnails?.medium?.url ||
+            item.snippet?.thumbnails?.high?.url ||
             "";
 
         const card =
@@ -1666,14 +1700,11 @@ function appendResults(items){
                     src="${escapeHtml(thumb)}"
                     loading="lazy"
                     alt="">
+                <span class="video-duration" data-duration-id="${escapeHtml(videoId)}" hidden></span>
 
             </div>
 
             <div class="video-info">
-
-                <div class="channel-logo" data-channel-id="${escapeHtml(item.snippet?.channelId||"")}">
-                    👤
-                </div>
 
                 <div class="details">
 
@@ -1689,9 +1720,9 @@ function appendResults(items){
 
                     </div>
 
-                    <div class="meta">
-                        ${escapeHtml(channel)}
-                        • YouTube
+                    <div class="video-channel-row" data-channel-id="${escapeHtml(item.snippet?.channelId||'')}">
+                        <span class="channel-logo"><img alt="${escapeHtml(channel)} profile" loading="lazy"></span>
+                        <div class="meta">${escapeHtml(channel)} • YouTube</div>
                     </div>
 
                 </div>
@@ -1701,33 +1732,54 @@ function appendResults(items){
         `;
 
         results.appendChild(card);
+        durationIds.push(videoId);
 
     });
-    loadChannelAvatars(items);
-
+    if(durationIds.length) jawraLoadVideoDurations(durationIds, results);
+    jawraLoadChannelAvatars(items, results);
 }
 
-async function loadChannelAvatars(items){
-  try{
-    const ids=[...new Set((items||[]).map(x=>x.snippet?.channelId).filter(Boolean))];
-    if(!ids.length)return;
-    for(let i=0;i<ids.length;i+=50){
-      const batch=ids.slice(i,i+50);
-      const url="https://www.googleapis.com/youtube/v3/channels?part=snippet&id="+encodeURIComponent(batch.join(","))+"&key="+encodeURIComponent(API_KEY);
-      const response=await jawraFetch(url); if(!response.ok)continue;
-      const data=await response.json();
-      (data.items||[]).forEach(ch=>{
-        const avatar=ch.snippet?.thumbnails?.medium?.url||ch.snippet?.thumbnails?.default?.url;
-        if(!avatar)return;
-        document.querySelectorAll('.channel-logo[data-channel-id="'+ch.id+'"]') .forEach(el=>{
-          el.innerHTML='<img src="'+escapeHtml(avatar)+'" alt="Channel profile" loading="lazy">';
-          el.classList.add("has-avatar");
+
+/* Fetch actual YouTube video lengths in one low-cost videos.list batch. */
+const jawraDurationCache=new Map();
+const jawraDurationPending=new Set();
+function jawraFormatDuration(iso){
+    const m=String(iso||"").match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+    if(!m) return "";
+    const h=Number(m[1]||0), min=Number(m[2]||0), sec=Number(m[3]||0);
+    const pad=n=>String(n).padStart(2,"0");
+    return h ? `${h}:${pad(min)}:${pad(sec)}` : `${min}:${pad(sec)}`;
+}
+async function jawraLoadVideoDurations(ids, root){
+    const unique=[...new Set((ids||[]).map(String).filter(Boolean))];
+    const missing=unique.filter(id=>!jawraDurationCache.has(id)&&!jawraDurationPending.has(id));
+    const paint=()=>{
+        if(!root?.querySelectorAll) return;
+        root.querySelectorAll(".video-duration[data-duration-id]").forEach(el=>{
+            const id=el.dataset.durationId, value=jawraDurationCache.get(id);
+            if(value){el.textContent=value;el.hidden=false;}
         });
-      });
+    };
+    paint();
+    if(!missing.length) return;
+    missing.forEach(id=>jawraDurationPending.add(id));
+    for(let i=0;i<missing.length;i+=50){
+        const batch=missing.slice(i,i+50);
+        try{
+            const url="https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id="+encodeURIComponent(batch.join(","))+"&key="+encodeURIComponent(API_KEY);
+            const response=await jawraFetch(url);
+            const data=await response.json();
+            if(!response.ok) throw new Error(data.error?.message||"Duration lookup failed");
+            (data.items||[]).forEach(video=>{
+                const duration=jawraFormatDuration(video.contentDetails?.duration);
+                jawraDurationCache.set(String(video.id),duration||((video.snippet?.liveBroadcastContent==="live")?"LIVE":""));
+            });
+        }catch(_error){
+            // Keep the feed usable if the optional duration lookup is unavailable.
+        }finally{batch.forEach(id=>jawraDurationPending.delete(id));}
     }
-  }catch(e){/* Keep the default avatar if channel images cannot load. */}
+    paint();
 }
-
 
 /* =================================================
    INFINITE SCROLL
@@ -1984,9 +2036,6 @@ function playVideo(
         "likeCount"
     ).innerText="👍 ...";
 
-    document.getElementById(
-        "commentCount"
-    ).innerText="💬 ...";
 
     document
         .getElementById("actionMenu")
@@ -2065,12 +2114,6 @@ async function loadVideoStats(videoId){
                 stats.likeCount
             );
 
-        document.getElementById(
-            "commentCount"
-        ).innerText =
-            "💬 "+formatNumber(
-                stats.commentCount
-            );
 
     }catch(e){
 
@@ -2082,9 +2125,6 @@ async function loadVideoStats(videoId){
             "likeCount"
         ).innerText="👍 —";
 
-        document.getElementById(
-            "commentCount"
-        ).innerText="💬 —";
 
     }
 
@@ -2261,7 +2301,7 @@ function appendRelatedResults(items){
                 item.snippet?.title || ""
             );
 
-        if(!videoId || videoId===currentVideoId || isSameRelatedSong(title) || jawraPlayedVideoIds.has(String(videoId)) || jawraHomeVideoIds.has(videoId) || jawraRelatedHistory.has(String(videoId)) || relatedSeenIds.has(videoId)) return;
+        if(!videoId || !isLandscapeVideo(item) || videoId===currentVideoId || isSameRelatedSong(title) || jawraPlayedVideoIds.has(String(videoId)) || jawraHomeVideoIds.has(videoId) || jawraRelatedHistory.has(String(videoId)) || relatedSeenIds.has(videoId)) return;
         relatedSeenIds.add(videoId);
         jawraRememberRelated(videoId);
 
@@ -2271,8 +2311,9 @@ function appendRelatedResults(items){
             );
 
         const thumb =
-            item.snippet?.thumbnails?.high?.url ||
+            jawraGetLandscapeThumbnail(item)?.url ||
             item.snippet?.thumbnails?.medium?.url ||
+            item.snippet?.thumbnails?.high?.url ||
             "";
 
         const card =
@@ -2301,14 +2342,11 @@ function appendRelatedResults(items){
                     src="${escapeHtml(thumb)}"
                     loading="lazy"
                     alt="">
+                <span class="video-duration" data-duration-id="${escapeHtml(videoId)}" hidden></span>
 
             </div>
 
             <div class="video-info">
-
-                <div class="channel-logo" data-channel-id="${escapeHtml(item.snippet?.channelId||"")}">
-                    👤
-                </div>
 
                 <div class="details">
 
@@ -2320,8 +2358,9 @@ function appendRelatedResults(items){
 
                     </div>
 
-                    <div class="meta">
-                        ${escapeHtml(channel)}
+                    <div class="video-channel-row" data-channel-id="${escapeHtml(item.snippet?.channelId||'')}">
+                        <span class="channel-logo"><img alt="${escapeHtml(channel)} profile" loading="lazy"></span>
+                        <div class="meta">${escapeHtml(channel)}</div>
                     </div>
 
                 </div>
@@ -2334,7 +2373,8 @@ function appendRelatedResults(items){
         added++;
 
     });
-    loadChannelAvatars(items);
+    if(added) jawraLoadVideoDurations(items.map(item=>item?.id?.videoId).filter(Boolean), container);
+    jawraLoadChannelAvatars(items, container);
     return added;
 }
 
@@ -2784,7 +2824,7 @@ function showSaved(){
   if(!navigator.onLine){const note=document.createElement("div");note.className="empty-state";note.textContent="অফলাইন মোড: Saved তালিকা দেখা যাবে। কিন্তু YouTube ভিডিও আগে থেকে ডাউনলোড করে রাখা না থাকলে চালাতে ইন্টারনেট লাগবে।";box.appendChild(note);}
   saved.forEach(v=>{
     const card=document.createElement("div");card.className="video";
-    card.innerHTML=`<div class="thumbnail-wrap"><img class="thumbnail" loading="lazy" src="${escapeHtml(v.thumb||'')}" alt=""></div><div class="video-info"><div class="channel-logo">✦</div><div class="details"><div class="title">${escapeHtml(v.title||'Saved video')}</div><div class="meta">${escapeHtml(v.channel||'YouTube')}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="saved-open" style="background:#35e6e6;color:#080808;border:0;border-radius:9px;padding:9px 13px;font-weight:800">Play</button><button class="saved-remove" style="background:#1b1b1b;color:#8ffcff;border:1px solid #5b4a1a;border-radius:9px;padding:9px 13px">Remove</button></div></div></div>`;
+    card.innerHTML=`<div class="thumbnail-wrap"><img class="thumbnail" loading="lazy" src="${escapeHtml(v.thumb||'')}" alt=""></div><div class="video-info"><div class="details"><div class="title">${escapeHtml(v.title||'Saved video')}</div><div class="meta">${escapeHtml(v.channel||'YouTube')}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="saved-open" style="background:#35e6e6;color:#080808;border:0;border-radius:9px;padding:9px 13px;font-weight:800">Play</button><button class="saved-remove" style="background:#1b1b1b;color:#8ffcff;border:1px solid #5b4a1a;border-radius:9px;padding:9px 13px">Remove</button></div></div></div>`;
     card.querySelector('.saved-open').onclick=()=>{hideSavedScreen();playVideo(v.id,v.title,v.channel,v.thumb);};
     card.querySelector('.saved-remove').onclick=()=>{let list=[];try{list=JSON.parse(localStorage.getItem("jawraSavedVideos")||"[]");}catch(e){}if(!list.length){try{list=JSON.parse(sessionStorage.getItem("jawraSavedVideos")||"[]");}catch(e){}}list=list.filter(x=>x.id!==v.id);try{localStorage.setItem("jawraSavedVideos",JSON.stringify(list));}catch(e){}try{sessionStorage.setItem("jawraSavedVideos",JSON.stringify(list));}catch(e){}showSaved();};
     box.appendChild(card);
@@ -3198,7 +3238,7 @@ document.addEventListener('DOMContentLoaded',()=>{const ui=document.querySelecto
  const searchPage=$('jawraSearchPage'),settingsPage=$('jawraAISettings');
  const KEY='jawraGroqApiKey_v2',PROMPT='jawraSystemPrompt_v1',VOICE='jawraVoiceMode_v1',MODEL='jawraGroqModel_v1';
  let enabled=false,recognition=null,restartTimer=null,speaking=false,busy=false,commandReceived=false;
- const defaultPrompt='তুমি JAURA AI, JAWRA MUSIC অ্যাপের বাংলা ভয়েস সহকারী। ব্যবহারকারীর সঙ্গে স্বাভাবিক, সংক্ষিপ্ত ও ভদ্র বাংলায় কথা বলবে। ব্যবহারকারী গান বা ভিডিও খুঁজতে বললে search action বেছে নেবে এবং query-তে শুধু নাম রাখবে। ভিডিও চালানো, থামানো, পরের ভিডিও, হোম, ব্যাক, সেভড, পপআপ, রোটেট ও স্ক্রল কমান্ড বুঝে action দেবে। কাজ সফল হয়েছে বলে মিথ্যা বলবে না। সাধারণ প্রশ্ন হলে chat action দেবে।';
+ const defaultPrompt='তুমি JAURA AI, JAWRA MUSIC-এর প্রাণবন্ত বাংলা ভয়েস সঙ্গী। ব্যবহারকারীর সঙ্গে বন্ধুসুলভ, হাসিখুশি, স্বাভাবিক ও সম্মানজনক বাংলায় কথা বলবে; মাঝে মাঝে ছোট্ট মজার কথা বা হালকা রসিকতা করবে, কিন্তু বিরক্তিকর বা অতিরিক্ত বাচাল হবে না। উত্তর সাধারণত ১-২ বাক্যে দেবে। ব্যবহারকারীর কথা মন দিয়ে বুঝবে, আগের কথার প্রসঙ্গ ধরে উত্তর দেবে। গান/ভিডিও খোঁজা, চালানো, থামানো, পরের ভিডিও, হোম, ব্যাক, সেভড, পপআপ, রোটেট ও স্ক্রল কমান্ড বুঝে সঠিক action দেবে। কাজ সফল হয়েছে বলে মিথ্যা বলবে না; সাধারণ আলাপ হলে chat action দেবে।';
  window.jawraOpenNewSearch=function(){searchPage.classList.add('show');searchPage.setAttribute('aria-hidden','false');settingsPage.classList.remove('show');const old=$('searchInput'),input=$('jawraPageSearchInput');if(old&&input)input.value=old.value;setTimeout(()=>input?.focus(),120)};
  window.jawraCloseSearchPage=function(){searchPage.classList.remove('show');searchPage.setAttribute('aria-hidden','true')};
  window.jawraOpenAISettings=function(){ $('jawraGroqKeyNew').value=localStorage.getItem(KEY)||'';$('jawraSystemPromptNew').value=localStorage.getItem(PROMPT)||defaultPrompt;$('jawraVoiceModeNew').value=localStorage.getItem(VOICE)||'bn-BD';$('jawraGroqModelNew').value=localStorage.getItem(MODEL)||'openai/gpt-oss-120b';settingsPage.classList.add('show');settingsPage.setAttribute('aria-hidden','false')};
@@ -3316,5 +3356,321 @@ document.addEventListener('DOMContentLoaded',()=>{const ui=document.querySelecto
   };
 })();
 </script>
+        <!-- JAWRA MUSIC · LIQUID GLASS + API ROTATION + AI PERSONALITY UPDATE -->
+        <style id="jawra-liquid-glass-update">
+:root{--lg-accent:#bd69ff;--lg-glow:#a64dff;--lg-glass:rgba(255,255,255,.075);--lg-stroke:rgba(255,255,255,.19);--lg-text:#f8f4ff}
+html,body{background:radial-gradient(ellipse at 12% 0%,#241044 0%,#090611 44%,#030308 100%)!important;color:var(--lg-text)!important}
+body{background-attachment:fixed!important}
+button:not(#quotaTryAgain),.header,.bottom-nav,.search,.category,.plus-button,.bg-menu,.bg-option,.player-btn,.player-actions,.player-quick-actions button,.player-more-btn,.stat,.action-menu,.action-menu button,#jawraAiStatus,#jawraAISettings,#jawraSearchPage,.jawra-page-head,.jawra-setting-control,.jawra-save-settings{background:rgba(20,15,37,.56)!important;color:#fff!important;border:1px solid var(--lg-stroke)!important;backdrop-filter:blur(24px) saturate(180%)!important;-webkit-backdrop-filter:blur(24px) saturate(180%)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 8px 28px rgba(0,0,0,.32)!important}
+.header{background:rgba(12,8,24,.62)!important;border-bottom-color:rgba(255,255,255,.14)!important}
+.logo{color:#f4dfff!important;text-shadow:0 0 18px #b65cff!important}
+.header-search,.menu-button{color:#f4dfff!important}
+.search-area,.categories,#results,#savedScreen,.video,.related-video,.related-title,#relatedResults{background:transparent!important}
+.search{border-radius:24px!important;background:rgba(255,255,255,.075)!important}
+.search input{color:#fff!important}.search input::placeholder{color:#c7bbd7!important}
+.search button,.search button[aria-label="Voice search"]{background:linear-gradient(135deg,rgba(220,177,255,.34),rgba(118,61,191,.42))!important;color:#fff!important;border:1px solid rgba(255,255,255,.28)!important;border-radius:18px!important}
+.category{border-radius:999px!important;background:rgba(255,255,255,.075)!important;color:#f6efff!important;border:1px solid rgba(255,255,255,.17)!important;box-shadow:inset 0 1px 0 #ffffff20,0 5px 18px #0005!important}
+.category.active,.plus-button{background:linear-gradient(135deg,rgba(212,155,255,.55),rgba(105,43,176,.7))!important;border-color:rgba(237,207,255,.65)!important;color:#fff!important;box-shadow:0 0 22px #a64dff55,inset 0 1px 0 #ffffff55!important}
+.thumbnail-wrap{border-radius:18px!important;overflow:hidden!important;border:1px solid rgba(255,255,255,.18)!important;box-shadow:0 10px 28px #0007!important}
+.video-info{padding-left:14px!important;padding-right:14px!important}
+.channel-logo{background:rgba(174,112,226,.2)!important;border:1px solid #ffffff30!important;color:#f4dfff!important}
+.title{color:#fff!important}.meta{color:#c2b4d2!important}
+.bottom-nav{left:10px!important;right:10px!important;bottom:8px!important;width:auto!important;height:70px!important;border-radius:26px!important;background:rgba(30,20,49,.68)!important;border:1px solid rgba(255,255,255,.23)!important;box-shadow:0 10px 35px #0009,inset 0 1px 0 #ffffff30!important}
+.nav-item,.nav-icon{color:#eadcff!important}.nav-item:active,.nav-item:focus{color:#fff!important;text-shadow:0 0 12px #c77aff!important}
+.bg-menu{border-radius:20px!important}.bg-option{border-radius:14px!important;background:rgba(255,255,255,.08)!important}
+.player-actions,.player-quick-actions{background:rgba(12,8,24,.72)!important;border-color:rgba(255,255,255,.14)!important;backdrop-filter:blur(22px)!important}
+.stat,.player-quick-actions button,.player-more-btn{border-radius:18px!important;background:rgba(255,255,255,.09)!important;border-color:rgba(255,255,255,.2)!important;color:#f6eaff!important}
+#floatingPlayPause{background:radial-gradient(circle at 30% 20%,rgba(239,205,255,.55),rgba(99,37,158,.78) 58%,rgba(17,9,29,.92))!important;border:1px solid rgba(255,255,255,.48)!important;color:#fff!important;box-shadow:0 0 26px #b55cff99,inset 0 1px 0 #ffffff88!important;backdrop-filter:blur(18px)!important}
+#jawraAiStatus{border-radius:20px!important;color:#fff!important;background:rgba(28,16,44,.8)!important;border-color:#d8b2ff!important}
+#quotaBanner{z-index:12001!important}
+#quotaBanner .quota-card{background:rgba(19,12,32,.9)!important;border:1px solid rgba(255,255,255,.25)!important;border-radius:24px!important;backdrop-filter:blur(28px)!important;color:#fff!important}
+#networkBanner .network-card{background:rgba(19,12,32,.9)!important;border:1px solid rgba(255,255,255,.25)!important;border-radius:24px!important;backdrop-filter:blur(28px)!important;color:#fff!important}
+#quotaBanner .quota-list{grid-template-columns:1fr!important;max-width:330px!important}#quotaBanner .quota-row{font-size:12px!important;padding:7px 9px!important;border-radius:10px!important}#quotaBanner .quota-row strong{font-size:12px!important}
+/* A single-key warning is a small non-blocking glass toast; only all-eight exhaustion blocks video loading. */
+/* Robot-themed Liquid Glass quota dialogs: single-key switch + final reset screen. */
+#quotaBanner.jawra-single-key,#quotaBanner.jawra-all-keys{
+  position:fixed!important;inset:0!important;left:0!important;right:0!important;top:0!important;bottom:0!important;
+  width:100%!important;height:100%!important;max-height:100dvh!important;transform:none!important;
+  display:none;align-items:center!important;justify-content:center!important;padding:22px!important;
+  border:0!important;border-radius:0!important;background:rgba(5,3,12,.78)!important;
+  backdrop-filter:blur(15px) saturate(150%)!important;-webkit-backdrop-filter:blur(15px) saturate(150%)!important;
+  z-index:15000!important;pointer-events:auto!important;overflow-y:auto!important;
+}
+#quotaBanner.jawra-single-key.show,#quotaBanner.jawra-all-keys.show{display:flex!important}
+#quotaBanner.jawra-single-key .quota-card,#quotaBanner.jawra-all-keys .quota-card{
+  display:block!important;width:min(92vw,410px)!important;max-width:410px!important;max-height:calc(100dvh - 44px)!important;
+  overflow-y:auto!important;margin:auto!important;padding:25px 20px!important;text-align:center!important;
+  color:#fbf5ff!important;border:1px solid rgba(226,184,255,.42)!important;border-radius:28px!important;
+  background:radial-gradient(ellipse at 50% 0%,rgba(151,67,214,.32),transparent 55%),rgba(25,14,42,.88)!important;
+  box-shadow:0 0 0 1px rgba(255,255,255,.06) inset,0 0 38px rgba(173,76,255,.28),0 24px 80px #000c!important;
+  backdrop-filter:blur(30px) saturate(180%)!important;-webkit-backdrop-filter:blur(30px) saturate(180%)!important;
+}
+#quotaBanner .quota-robot{font-size:48px;line-height:1.15;margin:0 auto 10px;filter:drop-shadow(0 0 16px #b75cff);}
+#quotaBanner .quota-kicker{font-size:10px;letter-spacing:2px;color:#d9b5ff;margin:4px 0 9px;font-weight:800}
+#quotaBanner .quota-heading{display:block;font-size:clamp(18px,5vw,23px);line-height:1.25;color:#fff;font-weight:900}
+#quotaBanner .quota-copy{font-size:13px;line-height:1.6;color:#e5d9f0;margin:12px 0 16px}
+#quotaBanner .quota-card button{display:block;width:100%;margin:16px 0 0!important;padding:14px 18px!important;border:1px solid rgba(255,255,255,.5)!important;border-radius:18px!important;
+  color:#fff!important;background:linear-gradient(135deg,#b65bfa,#7629bd 58%,#4c1c7d)!important;
+  box-shadow:0 0 22px rgba(177,78,255,.34),inset 0 1px 0 #ffffff70!important;font-size:14px!important;font-weight:900!important;letter-spacing:.5px!important;white-space:normal!important}
+#quotaBanner .quota-card button:disabled{opacity:.4!important;filter:grayscale(1)!important;box-shadow:none!important}
+#quotaBanner .quota-list{grid-template-columns:1fr!important;gap:7px!important;max-width:100%!important;margin:14px auto!important}
+#quotaBanner .quota-row{display:flex!important;justify-content:space-between!important;padding:8px 11px!important;border:1px solid rgba(220,184,255,.18)!important;border-radius:12px!important;background:rgba(255,255,255,.055)!important;color:#f0e5fa!important;font-size:12px!important}
+#quotaBanner .quota-row strong{font-size:12px!important;color:#e2baff!important;font-variant-numeric:tabular-nums!important}
+
+/* Requested layout refinements: edge-to-edge square thumbnails with real channel avatars. */
+.video,.related-video{width:100%;}
+.video .thumbnail-wrap,.related-video .thumbnail-wrap{
+  width:100vw!important;
+  max-width:none!important;
+  margin-left:calc((100% - 100vw)/2)!important;
+  border-radius:0!important;
+  border:0!important;
+  box-shadow:none!important;
+  overflow:hidden!important;
+}
+.video .thumbnail,.related-video .thumbnail{border-radius:0!important;}
+.video-channel-row{display:flex;align-items:center;gap:9px;margin-top:8px;min-height:38px;}
+.video-channel-row .channel-logo{display:flex!important;flex:0 0 36px;width:36px;height:36px;min-width:36px;border-radius:50%;overflow:hidden;background:#202020;border:1px solid #444;align-items:center;justify-content:center;}
+.video-channel-row .channel-logo img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;}
+.video-channel-row .meta{margin-top:0;min-width:0;}
+
+</style>
+        <script id="jawra-liquid-glass-api-update">
+(function(){
+ const $=id=>document.getElementById(id);
+ let toastTimer=null, quotaTimer=null, requestQueue=Promise.resolve();
+ const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ function setActive(index){activeApiIndex=index;API_KEY=API_KEYS[index];try{localStorage.setItem(JAWRA_ACTIVE_API_KEY,String(index))}catch(e){}}
+ let pendingApiChoiceResolve=null;
+ function ordinalApi(n){return ['1st','2nd','3rd'][n-1]||n+'th'}
+ function showSingleKeyToast(endedIndex,nextIndex){
+   const banner=$('quotaBanner');if(!banner)return Promise.resolve();
+   const card=banner.querySelector('.quota-card');if(!card)return Promise.resolve();
+   banner.classList.remove('jawra-all-keys');banner.classList.add('jawra-single-key');
+   const ended=ordinalApi(endedIndex+1),next=ordinalApi(nextIndex+1);
+   card.innerHTML='<div class="quota-robot">🤖</div><div class="quota-kicker">JAWRA MUSIC · API QUOTA NOTICE</div><strong class="quota-heading">'+ended+' API KEY QUOTA END</strong><p class="quota-copy">এই API Key-এর কোটা শেষ হয়েছে। পরের API চালু করতে নিচের বাটনে চাপ দাও।</p><button type="button" id="jawraNextApiToast">'+next+' API ON</button>';
+   banner.classList.add('show');
+   return new Promise(resolve=>{
+     pendingApiChoiceResolve=resolve;
+     $('jawraNextApiToast')?.addEventListener('click',()=>{
+       setActive(nextIndex);banner.classList.remove('show','jawra-single-key');
+       pendingApiChoiceResolve=null;resolve();
+     },{once:true});
+   });
+ }
+ function bdTime(ms){return new Intl.DateTimeFormat('bn-BD',{timeZone:'Asia/Dhaka',year:'numeric',month:'long',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true}).format(new Date(ms))+' (বাংলাদেশ সময়)'}
+ function renderAllExhausted(){
+   const banner=$('quotaBanner');if(!banner)return;
+   let card=banner.querySelector('.quota-card');if(!card){banner.innerHTML='<div class="quota-card"></div>';card=banner.querySelector('.quota-card')}
+   const info=getJawraAllApiResetInfo();
+   const rows=info.map(x=>'<div class="quota-row"><span>'+ordinalApi(x.index+1)+' API</span><strong>'+formatJawraCountdown(x.remaining)+'</strong></div>').join('');
+   const latest=Math.max(...info.map(x=>x.until||Date.now()));
+   const ready=info.every(x=>x.remaining<=0);
+   card.innerHTML='<div class="quota-robot">🤖</div><div class="quota-kicker">JAWRA MUSIC · SYSTEM RESET</div><strong class="quota-heading">ALL 8 API QUOTA EXHAUSTED</strong><p class="quota-copy">সবগুলো API Key-এর কোটা শেষ। প্রতিটি API রিসেট না হওয়া পর্যন্ত ভিডিও লোড হবে না।</p><div id="quotaDetails" class="quota-list">'+rows+'</div><p style="font-size:11px;color:#d7c5e8;margin:12px 0 4px">সবশেষে রিসেট হবে</p><strong id="jawraFinalResetTime" style="font-size:12px;color:#fff">'+bdTime(latest)+'</strong><div id="quotaClock" style="font-size:17px;font-weight:900;color:#e2baff;margin-top:8px">'+formatJawraCountdown(latest-Date.now())+'</div><button type="button" id="quotaTryAgain" '+(ready?'':'disabled')+'>TRY AGAIN</button>';
+   $('quotaTryAgain')?.addEventListener('click',()=>{if(!info.every(x=>x.remaining<=0))return;window.tryAgainJawraApis()});
+   banner.classList.remove('jawra-single-key');banner.classList.add('jawra-all-keys','show');
+ }
+ window.renderQuotaBanner=function(){
+   refreshJawraApiQuotaState();
+   const next=getJawraAvailableApiIndex();
+   if(next>=0){jawraQuotaLocked=false;setActive(next);const exhausted=API_KEYS.findIndex((_,i)=>Number(jawraApiQuotaState[i]||0)>Date.now());if(exhausted>=0)showSingleKeyToast(exhausted,next);return}
+   jawraQuotaLocked=true;renderAllExhausted();
+ };
+ window.showQuotaBanner=function(){refreshJawraApiQuotaState();const next=getJawraAvailableApiIndex();if(next>=0){jawraQuotaLocked=false;const ended=API_KEYS.findIndex((_,i)=>Number(jawraApiQuotaState[i]||0)>Date.now());setActive(next);if(ended>=0)showSingleKeyToast(ended,next);return}jawraQuotaLocked=true;renderAllExhausted();if(quotaTimer)clearInterval(quotaTimer);quotaTimer=setInterval(updateAllResetCountdown,1000)};
+ function updateAllResetCountdown(){
+   if(!jawraQuotaLocked)return;refreshJawraApiQuotaState();
+   const info=getJawraAllApiResetInfo();const allReady=info.every(x=>x.remaining<=0);
+   const list=$('quotaDetails');if(list)list.innerHTML=info.map(x=>'<div class="quota-row"><span>'+ordinalApi(x.index+1)+' API</span><strong>'+formatJawraCountdown(x.remaining)+'</strong></div>').join('');
+   const latest=Math.max(...info.map(x=>x.until||Date.now()));const clock=$('quotaClock');if(clock)clock.textContent=formatJawraCountdown(latest-Date.now());const exact=$('jawraFinalResetTime');if(exact)exact.textContent=bdTime(latest);
+   const btn=$('quotaTryAgain');if(btn){btn.disabled=!allReady;btn.textContent=allReady?'TRY AGAIN':'WAITING FOR RESET';}
+ }
+ window.updateQuotaClock=updateAllResetCountdown;
+ window.markJawraApiExhausted=function(index){
+   jawraApiQuotaState[index]=getQuotaResetInfo().target;
+   saveJawraApiQuotaState();
+   const next=API_KEYS.findIndex((_,i)=>i!==index&&!isJawraApiExhausted(i));
+   if(next>=0){jawraQuotaLocked=false;showSingleKeyToast(index,next)}
+   else{jawraApiQuotaState._allExhausted=true;saveJawraApiQuotaState();jawraQuotaLocked=true;renderAllExhausted();if(quotaTimer)clearInterval(quotaTimer);quotaTimer=setInterval(updateAllResetCountdown,1000)}
+ };
+ window.activateJawraApiKey=function(index){if(index<0||index>=API_KEYS.length||isJawraApiExhausted(index))return;setActive(index);jawraQuotaLocked=false;$('quotaBanner')?.classList.remove('show');retryJawraCurrentFeed()};
+ window.tryAgainJawraApis=function(){refreshJawraApiQuotaState();if(getJawraAllApiResetInfo().some(x=>x.remaining>0))return;for(let i=0;i<API_KEYS.length;i++)delete jawraApiQuotaState[i];delete jawraApiQuotaState._allExhausted;saveJawraApiQuotaState();jawraQuotaLocked=false;setActive(0);$('quotaBanner')?.classList.remove('show','jawra-all-keys');if(quotaTimer){clearInterval(quotaTimer);quotaTimer=null;}retryJawraCurrentFeed()};
+ window.hideQuotaBanner=function(){if(!jawraQuotaLocked)$('quotaBanner')?.classList.remove('show')};
+ // Serialize YouTube API requests so simultaneous feed requests cannot race through the same exhausted project.
+ window.jawraFetch=function(url,timeoutMs=16000){
+   const run=async()=>{
+     const isYT=String(url).includes('googleapis.com/youtube/');if(!isYT)return fetch(url,{cache:'no-store'});
+     refreshJawraApiQuotaState();if(jawraQuotaLocked||getJawraAvailableApiIndex()<0){showQuotaBanner();throw new Error('All eight YouTube API projects are waiting for quota reset.');}
+     const tried=new Set();let last=null;
+     for(let attempt=0;attempt<API_KEYS.length;attempt++){
+       let idx=activeApiIndex;if(tried.has(idx)||isJawraApiExhausted(idx))idx=API_KEYS.findIndex((_,i)=>!tried.has(i)&&!isJawraApiExhausted(i));
+       if(idx<0)break;tried.add(idx);
+       const requestUrl=String(url).replace(/([?&]key=)[^&]*/,'$1'+encodeURIComponent(API_KEYS[idx]));
+       const controller=typeof AbortController!=='undefined'?new AbortController():null;let timer=null;
+       try{
+         if(controller)timer=setTimeout(()=>controller.abort(),timeoutMs);
+         const response=await fetch(requestUrl,controller?{signal:controller.signal,cache:'no-store'}:{cache:'no-store'});last=response;
+         if(response.ok)return response;
+         const payload=await response.clone().json().catch(()=>null),err=payload?.error||payload||{};
+         const reasons=(err.errors||[]).map(x=>String(x.reason||'')).join(' '),msg=String(err.message||''),code=String(err.status||'');
+         const quota=/quotaExceeded|dailyLimitExceeded|rateLimitExceeded/i.test(reasons+' '+code+' '+msg);
+         const keyBad=/keyInvalid|API key not valid|accessNotConfigured|forbidden|serviceDisabled/i.test(reasons+' '+code+' '+msg);
+         if(!quota&&!keyBad)return response;
+         jawraApiLastError='API '+(idx+1)+': '+(msg||reasons||code||'API unavailable');
+         jawraApiQuotaState[idx]=quota?getQuotaResetInfo().target:(Date.now()+6*60*60*1000);saveJawraApiQuotaState();
+         const next=API_KEYS.findIndex((_,i)=>!tried.has(i)&&!isJawraApiExhausted(i));
+         if(next>=0){jawraQuotaLocked=false;await showSingleKeyToast(idx,next);continue;}
+         jawraApiQuotaState._allExhausted=true;saveJawraApiQuotaState();jawraQuotaLocked=true;showQuotaBanner();return response;
+       }finally{if(timer)clearTimeout(timer)}
+     }
+     jawraQuotaLocked=true;showQuotaBanner();if(last)return last;throw new Error('All eight API projects are exhausted.');
+   };
+   const chained=requestQueue.then(run,run);requestQueue=chained.catch(()=>{});return chained;
+ };
+ // Categories still search their own topic, but never leave that topic in the visible search field.
+ window.categorySearch=function(category){
+   document.querySelectorAll('.category').forEach(el=>el.classList.toggle('active',el.innerText.trim().toLowerCase()===(category||'All').toLowerCase()));
+   if(category==='Shorts'){openShorts();return;}
+   const input=$('searchInput');if(!category){if(input)input.value='';loadHomeVideos();return;}
+   if(input)input.value=category;searchMusic();if(input)input.value='';
+ };
+ // Search icon opens the dedicated search page with a blank field, never copies a category label.
+ window.focusSearch=function(){if(typeof window.jawraOpenNewSearch==='function'){window.jawraOpenNewSearch();const field=$('jawraPageSearchInput');if(field)field.value='';}else{const input=$('searchInput');if(input){input.value='';input.focus({preventScroll:true})}}};
+ // Make the default integrated assistant personality upbeat and conversational while preserving saved user settings.
+ try{if(!localStorage.getItem('jawraSystemPrompt_v1'))localStorage.setItem('jawraSystemPrompt_v1','তুমি JAURA AI, JAWRA MUSIC-এর হাসিখুশি ও বন্ধুসুলভ বাংলা ভয়েস সঙ্গী। স্বাভাবিক, প্রাণবন্ত, সম্মানজনক বাংলায় কথা বলবে; মাঝে মাঝে ছোট্ট মজার কথা বা হালকা রসিকতা করবে। অতিরিক্ত বাচাল হবে না, সাধারণত ১-২ বাক্যে উত্তর দেবে। ব্যবহারকারীর আগের কথার প্রসঙ্গ ধরে রাখবে। গান/ভিডিও সার্চ, প্লে, পজ, নেক্সট, হোম, ব্যাক, সেভ, পপআপ ও রোটেট কমান্ড সঠিকভাবে বুঝবে। কাজ হয়েছে বলে মিথ্যা বলবে না। সাধারণ আলাপ হলে chat action বেছে নেবে।')}catch(e){}
+ window.addEventListener('load',()=>{refreshJawraApiQuotaState();if(getJawraAvailableApiIndex()<0){jawraQuotaLocked=true;showQuotaBanner()}else{const old=Number(localStorage.getItem(JAWRA_ACTIVE_API_KEY)||0);if(isJawraApiExhausted(old))setActive(getJawraAvailableApiIndex())}});
+})();
+</script>
+        <style id="jawra-purple-glass-nav-refinement">
+/* Only the requested color and bottom-navigation refinements */
+:root{
+  --lg-accent:#c13cff;
+  --lg-glow:#a800ff;
+  --lg-glass:rgba(255,255,255,.075);
+  --lg-stroke:rgba(224,185,255,.28);
+  --lg-text:#fbf6ff;
+}
+/* Remove cyan/blue tones from the Liquid Glass surfaces and accents. */
+.bottom-nav,.header,.search,.category,.plus-button,
+.bg-menu,.bg-option,.player-btn,.player-actions,.player-quick-actions,
+.player-quick-actions button,.player-more-btn,.stat,.action-menu,
+.action-menu button,#jawraAiStatus,#jawraAISettings,#jawraSearchPage,
+.jawra-page-head,.jawra-setting-control,.jawra-save-settings,
+#miniPlayer,#floatingPlayPause,#networkBanner.center-banner,#quotaBanner,
+#networkBanner button,#quotaBanner button,.jawra-separate-search button,
+.jawra-save-settings{
+  border-color:rgba(221,174,255,.30)!important;
+}
+.search button,.search button[aria-label="Voice search"],
+.jawra-separate-search button{
+  background:linear-gradient(135deg,rgba(245,218,255,.36),rgba(151,47,220,.72))!important;
+  color:#fff!important;
+  box-shadow:0 0 18px rgba(180,45,255,.30),inset 0 1px 0 #ffffff66!important;
+}
+.category.active,.plus-button,#networkBanner button,#quotaBanner button,
+.jawra-save-settings{
+  background:linear-gradient(135deg,rgba(239,190,255,.56),rgba(143,35,220,.82))!important;
+  color:#fff!important;
+  box-shadow:0 0 20px rgba(174,45,255,.36),inset 0 1px 0 #ffffff66!important;
+}
+#miniPlayer{border-color:rgba(214,158,255,.55)!important;box-shadow:0 8px 28px #000a,0 0 18px rgba(170,35,255,.22)!important}
+#floatingPlayPause{border-color:rgba(235,196,255,.62)!important;color:#fff!important;box-shadow:0 0 24px rgba(177,40,255,.58),inset 0 1px 0 #ffffff88!important}
+#networkBanner.center-banner,#quotaBanner{border-color:rgba(224,181,255,.42)!important;color:#f5eaff!important}
+#networkBanner button,#quotaBanner button{color:#fff!important}
+#jawraAiStatus{color:#fff!important;border-color:rgba(223,177,255,.55)!important}
+/* Compact floating navigation pill, matching the supplied reference. */
+.bottom-nav{
+  left:10px!important;right:10px!important;bottom:8px!important;
+  width:auto!important;height:66px!important;min-height:66px!important;
+  box-sizing:border-box!important;padding:0 9px env(safe-area-inset-bottom)!important;
+  display:flex!important;align-items:center!important;justify-content:space-around!important;
+  gap:2px!important;border-radius:999px!important;
+  background:rgba(20,9,34,.66)!important;
+  border:1px solid rgba(229,192,255,.38)!important;
+  box-shadow:0 0 22px rgba(166,35,255,.28),0 9px 28px #0009,inset 0 1px 0 #ffffff44!important;
+  backdrop-filter:blur(25px) saturate(175%)!important;
+  -webkit-backdrop-filter:blur(25px) saturate(175%)!important;
+}
+.bottom-nav .nav-item{
+  flex:1 1 0!important;min-width:0!important;width:auto!important;height:100%!important;
+  margin:0!important;padding:5px 0 3px!important;border:0!important;border-radius:0!important;
+  background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;color:#eee1ff!important;
+  display:flex!important;flex-direction:column!important;align-items:center!important;
+  justify-content:center!important;gap:1px!important;font-size:10px!important;
+  line-height:1.1!important;font-weight:600!important;
+}
+.bottom-nav .nav-icon{display:block!important;margin:0 0 2px!important;font-size:21px!important;line-height:1!important;color:#f0ddff!important}
+.bottom-nav .nav-item:active,.bottom-nav .nav-item:focus{color:#fff!important;text-shadow:0 0 12px #c13cff!important}
+.bottom-nav .plus-button{
+  flex:0 0 54px!important;width:54px!important;height:54px!important;min-width:54px!important;
+  margin-top:-15px!important;padding:0!important;border-radius:50%!important;
+  display:flex!important;align-items:center!important;justify-content:center!important;
+  font-size:30px!important;line-height:1!important;color:#fff!important;
+  background:radial-gradient(circle at 32% 22%,rgba(255,235,255,.65),rgba(178,67,255,.75) 56%,rgba(48,12,75,.94))!important;
+  border:1px solid rgba(242,214,255,.72)!important;
+  box-shadow:0 0 20px rgba(185,48,255,.62),inset 0 1px 0 #ffffffaa!important;
+  backdrop-filter:blur(20px)!important;-webkit-backdrop-filter:blur(20px)!important;
+}
+body{padding-bottom:74px!important}
+</style>
+        <style id="jawra-white-liquid-glass-rounded-nav-final">
+/* Requested correction only: white frosted-glass surfaces and fully rounded nav buttons. */
+:root{--lg-glass:rgba(255,255,255,.16);--lg-stroke:rgba(255,255,255,.42)}
+/* Keep the existing purple/magenta accents, but make the glass itself white. */
+.header,.search,.category,.bg-menu,.bg-option,.player-btn,.player-actions,
+.player-quick-actions,.player-quick-actions button,.player-more-btn,.stat,
+.action-menu,.action-menu button,#jawraAiStatus,#jawraAISettings,#jawraSearchPage,
+.jawra-page-head,.jawra-setting-control,.jawra-save-settings,#miniPlayer,
+#floatingPlayPause,#networkBanner.center-banner,#quotaBanner{
+  background-color:rgba(255,255,255,.13)!important;
+  border-color:rgba(255,255,255,.42)!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.48),0 8px 26px rgba(0,0,0,.28)!important;
+  backdrop-filter:blur(26px) saturate(145%)!important;
+  -webkit-backdrop-filter:blur(26px) saturate(145%)!important;
+}
+.search{background:rgba(255,255,255,.15)!important}
+.category{background:rgba(255,255,255,.12)!important}
+.category.active{background:linear-gradient(135deg,rgba(255,255,255,.42),rgba(191,91,255,.52))!important}
+/* One rounded outer glass capsule; no square segmented borders. */
+.bottom-nav{
+  left:10px!important;right:10px!important;bottom:8px!important;
+  height:70px!important;min-height:70px!important;width:auto!important;
+  padding:5px 8px env(safe-area-inset-bottom)!important;box-sizing:border-box!important;
+  border-radius:999px!important;background:rgba(255,255,255,.17)!important;
+  border:1px solid rgba(255,255,255,.58)!important;
+  box-shadow:0 8px 28px rgba(0,0,0,.35),0 0 22px rgba(177,62,255,.24),inset 0 1px 0 rgba(255,255,255,.72)!important;
+  display:flex!important;align-items:center!important;justify-content:space-around!important;gap:5px!important;
+  backdrop-filter:blur(30px) saturate(155%)!important;-webkit-backdrop-filter:blur(30px) saturate(155%)!important;
+}
+.bottom-nav .nav-item{
+  flex:1 1 0!important;min-width:0!important;width:auto!important;height:54px!important;
+  margin:0!important;padding:5px 2px!important;border:1px solid rgba(255,255,255,.27)!important;
+  border-radius:22px!important;background:rgba(255,255,255,.12)!important;
+  color:#fff!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.35)!important;
+  display:flex!important;flex-direction:column!important;align-items:center!important;
+  justify-content:center!important;gap:2px!important;font-size:10px!important;line-height:1.1!important;
+  backdrop-filter:blur(18px)!important;-webkit-backdrop-filter:blur(18px)!important;
+}
+.bottom-nav .nav-icon{color:#fff!important;font-size:21px!important;line-height:1!important;margin:0 0 2px!important}
+.bottom-nav .nav-item:active,.bottom-nav .nav-item:focus{border-radius:22px!important;background:rgba(255,255,255,.24)!important;text-shadow:0 0 10px #c13cff!important}
+.bottom-nav .plus-button{
+  flex:0 0 54px!important;width:54px!important;height:54px!important;min-width:54px!important;
+  align-self:center!important;margin:0 1px!important;padding:0!important;border-radius:50%!important;
+  display:flex!important;align-items:center!important;justify-content:center!important;
+  background:rgba(255,255,255,.25)!important;color:#fff!important;
+  border:1px solid rgba(255,255,255,.72)!important;
+  box-shadow:0 0 18px rgba(181,75,255,.42),inset 0 1px 0 rgba(255,255,255,.85)!important;
+  backdrop-filter:blur(25px)!important;-webkit-backdrop-filter:blur(25px)!important;
+}
+body{padding-bottom:78px!important}
+/* Final requested details: centered search control and visible duration chips. */
+.bottom-nav .plus-button{margin:0 1px!important;align-self:center!important;transform:none!important}
+.bottom-nav .plus-button{line-height:1!important}
+.thumbnail-wrap{position:relative!important}
+.video-duration{position:absolute!important;right:8px!important;bottom:8px!important;z-index:3!important;padding:3px 6px!important;border-radius:5px!important;background:rgba(0,0,0,.82)!important;color:#fff!important;font-size:12px!important;font-weight:800!important;line-height:1.2!important;letter-spacing:.2px!important;box-shadow:0 1px 4px #0008!important}
+.video-duration[hidden]{display:none!important}
+/* Keep the header free of any legacy overflow/three-dot menu control. */
+.header .menu-button,.header .header-menu,.header .more-menu{display:none!important}
+</style>
       </body>
     </html>
